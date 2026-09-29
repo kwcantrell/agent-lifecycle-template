@@ -1,11 +1,12 @@
 # Humans own the lifecycle. With "Require review from Code Owners" on in the main ruleset,
-# an agent can't merge changes to its own guardrails. init.sh replaces @OWNER.
-/AGENTS.md              @OWNER
-/CLAUDE.md              @OWNER
-/.claude/               @OWNER
-/.agents/               @OWNER
-/.github/               @OWNER
-/scripts/               @OWNER
-/openspec/config.yaml   @OWNER
-/openspec/changes/      @OWNER
-/docs/decisions/        @OWNER
+# an agent can't merge changes to its own guardrails. This file is this repo's own; init.sh
+# renders targets' CODEOWNERS from scripts/templates/CODEOWNERS.tmpl instead of copying it.
+/AGENTS.md              @kwcantrell
+/CLAUDE.md              @kwcantrell
+/.claude/               @kwcantrell
+/.agents/               @kwcantrell
+/.github/               @kwcantrell
+/scripts/               @kwcantrell
+/openspec/config.yaml   @kwcantrell
+/openspec/changes/      @kwcantrell
+/docs/decisions/        @kwcantrell

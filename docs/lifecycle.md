@@ -65,7 +65,9 @@ CI runs `pr` on pull requests.
 
 ## Setup
 
-1. `scripts/init.sh /path/to/repo`, which asks for your stack commands and source globs.
+1. `scripts/init.sh --owner @you /path/to/repo`, which asks for your stack commands and source
+   globs. It renders `.github/CODEOWNERS` for that owner. It never touches an existing
+   CODEOWNERS; it prints the paths to add instead. With no owner, it skips CODEOWNERS.
 2. Add toolchain setup to the "Stack setup" steps in both workflows.
 3. Do the forge settings in `docs/security.md` "Setup a human must do".
 4. `pre-commit install --hook-type pre-commit --hook-type pre-push`
