@@ -1,0 +1,82 @@
+# The agent lifecycle, explained
+
+AGENTS.md is the rulebook agents load. This file is for humans: why the loop looks the way it
+does, and how to set it up. Agents don't need to read it.
+
+## The loop
+
+```
+Explore -> Tier -> Propose -> Panel -> APPROVE -> Branch -> Implement (TDD) -> Verify -> REVIEW + CI -> Archive
+                                         ^ human                                          ^ human, hard gate
+```
+
+The shape follows vendor guidance that converges on explore, plan, implement, verify
+([Anthropic](https://code.claude.com/docs/en/best-practices),
+[OpenAI Codex](https://developers.openai.com/codex/learn/best-practices)), with two hard
+gates added: human approval before code and green CI before merge. DORA 2025 found AI raises
+throughput but lowers stability unless testing, version control and small batches are strong
+([DORA](https://cloud.google.com/blog/products/ai-machine-learning/announcing-the-2025-dora-report)).
+The gates are how this template supplies those controls.
+
+Loop-backs:
+
+- Panel finds a critical issue: back to Propose.
+- Implementation shows the spec is wrong: stop, update the artifacts, re-panel the delta, re-approve.
+- Verify fails: back to Implement.
+- Review asks for changes outside scope: a new change, not this one.
+
+## Tiers
+
+See AGENTS.md for the table and ADR 0001 for the reasoning. The short version: a typo shouldn't
+need a panel, and an auth change shouldn't skip one. The path floor in `openspec/config.yaml`
+stops anyone from calling a guardrail change trivial.
+
+## Spec-driven, but light
+
+OpenSpec keeps specs durable: a change's spec deltas merge into `openspec/specs/` on archive.
+Thoughtworks warns that spec-driven development can slide back into waterfall, with days spent
+perfecting a spec ([podcast](https://www.thoughtworks.com/insights/podcasts/technology-podcasts/what-is-spec-driven-development)).
+Size the proposal to the change: a tier 1 proposal can be ten lines.
+
+## What the checks do
+
+`scripts/check-change.sh` is the single implementation. Stages:
+
+| Check | commit | hook | pr | Fails when |
+| --- | --- | --- | --- | --- |
+| openspec | x | x | x | `openspec validate --strict` or `--archived` fails |
+| workflows | x | x | x | An action isn't SHA-pinned, or a workflow lacks top-level `permissions:` |
+| skills-sync | x | x | x | `.agents/skills` differs from `.claude/skills` |
+| guide-size | x | x | x | AGENTS.md is over its line budget |
+| change | x | x | x | More than one change on the branch, no `Tier:` line, or tier 1-2 without a change |
+| risk-floor | x | x | x | A high-risk path is touched below tier 2 |
+| evidence | | x | x | A ticked task has no `Evidence:` |
+| commands | | x | x | lint, typecheck or test fails |
+| approval | | | x | Tier 1-2 proposal lacks `Approved-by:` |
+| panel | | | x | Tier 2 lacks panel.md, or a `- [ ] [critical]` finding is open |
+| tasks | | | x | An unticked task remains |
+| artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
+| tests-with-code | | | x | Source changed without a test change (label `no-test-needed` overrides) |
+| size | | | x | Over `size_budget` changed lines (label `size-override` overrides) |
+| audit | | | x | `lifecycle.commands.audit` fails |
+
+The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
+CI runs `pr` on pull requests.
+
+## Setup
+
+1. `scripts/init.sh /path/to/repo`, which asks for your stack commands and source globs.
+2. Add toolchain setup to the "Stack setup" steps in both workflows.
+3. Do the forge settings in `docs/security.md` "Setup a human must do".
+4. `pre-commit install --hook-type pre-commit --hook-type pre-push`
+5. Commit the install as a tier 2 change, run through the lifecycle itself.
+
+Presets for common stacks may come later. Until then, init.sh asks for the commands.
+
+## Operating
+
+- Release: `docs/templates/release-checklist.md`. Tagging `v*` runs `release.yml`, which builds,
+  generates an SBOM and attests provenance.
+- Rollback: rehearse with `docs/templates/rollback-drill.md` each quarter.
+- Incidents: `docs/templates/postmortem.md`. A postmortem that finds a process gap proposes a
+  rule with an ADR. One that finds a gate never fires proposes retiring it (ADR 0011).

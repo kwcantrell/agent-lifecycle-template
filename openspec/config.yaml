@@ -1,0 +1,62 @@
+schema: spec-driven
+
+# Shown to the agent when it writes change artifacts. Replace with your stack and domain.
+context: |
+  This repo follows the agent lifecycle in AGENTS.md. Every change declares a risk tier
+  (0, 1 or 2) in proposal.md; the tier decides which phases run. tasks.md is the only plan.
+
+rules:
+  proposal:
+    - "First line after the title is `Tier: 0`, `Tier: 1` or `Tier: 2`, set with the risk-tier skill."
+    - "Include a Non-goals section. Scope is fixed once approved."
+    - "Leave `Approved-by:` for the human; never write it yourself."
+  design:
+    - "List every assumption with the command that tests it and the observed output."
+  tasks:
+    - "Tasks are the only plan of record. Each task names the test written first."
+    - "Tick a task only with evidence: the command run and a short excerpt of its output."
+    - "Keep the change inside the size budget (lifecycle.size_budget below); split it if not."
+
+operations:
+  apply:
+    guidance:
+      - "Write the failing test first, then the code, then run scripts/check-change.sh."
+      - "If the spec proves wrong, stop, update the artifacts, re-review the delta and ask for re-approval."
+  archive:
+    guidance:
+      - "Archive only when check-change.sh passes and every task is ticked with evidence."
+      - "After archiving a new capability, replace the placeholder `## Purpose` in openspec/specs/<capability>/spec.md."
+
+# Read by scripts/check-change.sh. OpenSpec ignores this block.
+lifecycle:
+  # Stack commands. Empty means skipped (with a warning). init.sh asks for these and never
+  # copies the values below, which are this template repo's own.
+  commands:
+    test: "python3 -m unittest discover -s tests"
+    lint: "bash -n scripts/*.sh .claude/hooks/*.sh && python3 -m py_compile scripts/lib/check_change.py"
+    typecheck: ""
+    audit: ""
+    build: ""       # release workflow only
+  # Files the release workflow attests (glob, relative to the repo root).
+  release_artifacts: "dist/*"
+  # Which paths count as source and which as tests, for the tests-with-code gate.
+  source_globs: ["scripts/**", ".claude/hooks/**"]
+  test_globs: ["test/**", "tests/**", "**/*_test.*", "**/*.test.*", "**/*.spec.*", "**/test_*"]
+  # Changed-line budget per PR. Tests, openspec/ and these paths don't count.
+  size_budget: 400
+  size_exclude: ["**/*.lock", "**/package-lock.json", "**/pnpm-lock.yaml", "**/go.sum", "docs/**"]
+  # Any change touching these paths must be tier 2.
+  high_risk_paths:
+    - "AGENTS.md"
+    - "CLAUDE.md"
+    - ".claude/**"
+    - ".github/**"
+    - "scripts/**"
+    - "openspec/config.yaml"
+    - "**/auth/**"
+    - "**/migrations/**"
+  agent_guide_max_lines: 150
+  # PR labels that override a gate; the PR body must give the reason.
+  override_labels:
+    tests_with_code: "no-test-needed"
+    size_budget: "size-override"
