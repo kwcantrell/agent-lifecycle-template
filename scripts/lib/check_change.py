@@ -362,6 +362,10 @@ CHECKS = {
 }
 
 
+# Checks that read the tier or change directory `change` resolves.
+NEEDS_CHANGE = {"risk-floor", "approval", "panel", "tasks", "evidence", "artifacts-first"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", choices=STAGES, default="pr")
@@ -369,6 +373,16 @@ def main() -> int:
     ap.add_argument("--base", help="base ref (default: PR base, origin/main or main)")
     ap.add_argument("--quiet", action="store_true", help="print failures only")
     args = ap.parse_args()
+
+    if args.only is not None:
+        names = list(dict.fromkeys(n.strip() for n in args.only.split(",")))
+        unknown = [n for n in names if n not in CHECKS]
+        if unknown or not names:
+            print(f"check-change: unknown check {unknown or ['']}; valid checks: {', '.join(CHECKS)}",
+                  file=sys.stderr)
+            return 2
+    else:
+        names = STAGES[args.stage]
 
     body, labels = pr_event()
     ctx = Context(cfg=load_config(), base=resolve_base(args.base), changed=[], pr_body=body,
@@ -378,12 +392,19 @@ def main() -> int:
     if os.environ.get("LIFECYCLE_OVERRIDE") and not ctx.in_ci:
         ctx.overrides = {os.environ["LIFECYCLE_OVERRIDE"].split(":")[0].strip()}
 
-    names = args.only.split(",") if args.only else STAGES[args.stage]
-    if "change" not in names:  # later checks need the tier
-        check_change(ctx)
+    # Resolve the change once, up front, so no check's result depends on --only order.
+    change_result = check_change(ctx)
+    change_failed = change_result[0] == "FAIL"
+    if change_failed and "change" not in names and NEEDS_CHANGE.intersection(names):
+        names = ["change", *names]  # a failure that blocks requested checks is never hidden
     failed = False
     for name in names:
-        status, msg = CHECKS[name](ctx)
+        if name == "change":
+            status, msg = change_result
+        elif change_failed and name in NEEDS_CHANGE:
+            status, msg = "SKIP", "blocked: change failed"
+        else:
+            status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
         if not args.quiet or status == "FAIL":
             print(f"{status:<4}  {name:<16} {msg}")
