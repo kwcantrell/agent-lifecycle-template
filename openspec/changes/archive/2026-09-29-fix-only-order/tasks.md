@@ -16,4 +16,5 @@
 
 ## 3. Archive
 
-- [ ] 3.1 After archive, replace the placeholder `## Purpose` in `openspec/specs/gate-checker/spec.md`
+- [x] 3.1 After archive, replace the placeholder `## Purpose` in `openspec/specs/gate-checker/spec.md`
+  Evidence: `openspec validate --all --strict` -> passes (it fails on a placeholder Purpose)
