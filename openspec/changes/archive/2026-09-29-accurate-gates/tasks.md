@@ -22,4 +22,5 @@
 
 ## 3. Archive
 
-- [ ] 3.1 After archive, confirm `openspec validate --all --strict` passes with the merged `gate-checker` spec
+- [x] 3.1 After archive, confirm `openspec validate --all --strict` passes with the merged `gate-checker` spec
+  Evidence: `openspec validate --all --strict` -> `Totals: 2 passed, 0 failed`
