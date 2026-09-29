@@ -223,6 +223,80 @@ class CheckerTest(unittest.TestCase):
         self.assertIn("exited 3", out)
 
 
+class OnlyTest(unittest.TestCase):
+    """--only must not change results, hide a change failure, or crash on bad input."""
+
+    def setUp(self) -> None:
+        self.repo = Repo()
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def run_only(self, only: str, env: dict | None = None) -> tuple[int, list[str], str]:
+        ci = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        r = sh(self.repo.path, "scripts/check-change.sh", "--only", only, env={**ci, **(env or {})})
+        lines = [line.split()[0] + " " + line.split()[1] for line in r.stdout.splitlines() if line.strip()]
+        return r.returncode, lines, r.stdout + r.stderr
+
+    def approved_tier2(self) -> None:
+        self.repo.change(2, panel="- [x] [critical] Fixed. Resolved: yes\n")
+
+    def test_only_order_does_not_change_results(self):
+        self.approved_tier2()
+        for only in ("approval,panel,change", "change,approval,panel"):
+            with self.subTest(only=only):
+                rc, lines, out = self.run_only(only)
+                self.assertEqual(lines, [f"PASS {n}" for n in only.split(",")], out)
+                self.assertEqual(rc, 0, out)
+
+    def test_only_without_change_still_resolves_it(self):
+        self.approved_tier2()
+        rc, lines, out = self.run_only("approval,panel")
+        self.assertEqual(lines, ["PASS approval", "PASS panel"], out)
+
+    def test_change_failure_not_swallowed(self):
+        self.repo.change(1)
+        self.repo.write("openspec/changes/other/proposal.md", "# O\n\nTier: 1\n")
+        rc, lines, out = self.run_only("approval")
+        self.assertEqual(lines, ["FAIL change", "SKIP approval"], out)
+        self.assertIn("blocked: change failed", out)
+        self.assertEqual(rc, 1, out)
+
+    def test_unrelated_check_ignores_change_failure(self):
+        cfg = self.repo.path / "openspec/config.yaml"
+        cfg.write_text(cfg.read_text().replace('build: ""', 'build: "true"', 1))
+        self.repo.change(1)
+        self.repo.write("openspec/changes/other/proposal.md", "# O\n\nTier: 1\n")
+        rc, lines, out = self.run_only("build")
+        self.assertEqual(lines, ["PASS build"], out)
+        self.assertEqual(rc, 0, out)
+
+    def test_pr_tier_without_change_does_not_crash(self):
+        event = self.repo.path / "event.json"
+        event.write_text(json.dumps({"pull_request": {"body": "Tier: 1\n", "labels": []}}))
+        ci = {"CI": "", "GITHUB_EVENT_PATH": str(event), "GITHUB_BASE_REF": ""}
+        r = sh(self.repo.path, "scripts/check-change.sh", "--stage", "pr", env=ci)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("FAIL  change", r.stdout)
+        self.assertIn("blocked: change failed", r.stdout)
+        self.assertEqual(r.returncode, 1)
+
+    def test_only_dedupes_names(self):
+        self.approved_tier2()
+        rc, lines, out = self.run_only("change, change")
+        self.assertEqual(lines, ["PASS change"], out)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_only_rejects_unknown_names(self):
+        for only in ("bogus", "", "change,,"):
+            with self.subTest(only=only):
+                rc, lines, out = self.run_only(only)
+                self.assertEqual(rc, 2, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn("valid checks:", out)
+
+
 class HookTest(unittest.TestCase):
     def setUp(self) -> None:
         self.repo = Repo()
