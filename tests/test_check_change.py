@@ -66,7 +66,9 @@ class Repo:
             self.write(f"{d}/panel.md", panel)
 
     def check(self, *only: str, env: dict | None = None) -> tuple[int, str]:
-        r = sh(self.path, "scripts/check-change.sh", "--only", ",".join(only), env={"CI": "", **(env or {})})
+        # Clear CI context so a real PR's event (its Tier, labels, base) can't leak into the test.
+        ci = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        r = sh(self.path, "scripts/check-change.sh", "--only", ",".join(only), env={**ci, **(env or {})})
         return r.returncode, r.stdout + r.stderr
 
     def close(self) -> None:

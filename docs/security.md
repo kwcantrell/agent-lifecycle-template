@@ -37,6 +37,9 @@ These live in the forge, not the repo, so the template can't apply them:
 ## Known gaps
 
 - `Approved-by:` is a text line. Code owner review is the real control (ADR 0002).
+- With a single collaborator, code owner review can only be met through the admin's
+  bypass on PRs, since GitHub doesn't count an author's own approval. Anything holding the
+  admin's token, an agent included, has that bypass. Real separation needs a second reviewer.
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).
