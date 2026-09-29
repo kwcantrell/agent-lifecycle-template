@@ -87,6 +87,21 @@ def load_config() -> dict:
     return (data or {}).get("lifecycle") or {}
 
 
+# Settings that exempt files from gates. A PR can change them, but its own gates use the base's.
+EXEMPTION_KEYS = ("managed_paths", "test_globs", "size_exclude", "size_budget")
+
+
+def with_base_exemptions(cfg: dict, base: str | None) -> dict:
+    if not base:
+        return cfg
+    r = subprocess.run(["git", "show", f"{base}:openspec/config.yaml"], cwd=ROOT,
+                       capture_output=True, text=True)
+    base_lc = (yaml.safe_load(r.stdout) or {}).get("lifecycle") if r.returncode == 0 else None
+    if not isinstance(base_lc, dict):  # no lifecycle on the base yet (e.g. the install PR)
+        return cfg
+    return {**cfg, **{k: base_lc.get(k) for k in EXEMPTION_KEYS}}
+
+
 def resolve_base(explicit: str | None) -> str | None:
     candidates = [explicit] if explicit else []
     if os.environ.get("GITHUB_BASE_REF"):
@@ -185,17 +200,54 @@ def check_approval(ctx: Context):
     return "PASS", "approval recorded"
 
 
+PANEL_ITEM = re.compile(r"^[-*] \[([ xX])\] ?(.*)$")
+PANEL_TAG = re.compile(r"^\[(critical|major|minor)\](?=\s|$)")
+
+
+def panel_findings(text: str) -> tuple[list[tuple[str, str | None, str]], bool]:
+    """Findings are column-0 checklist items outside code fences and HTML comments.
+
+    Returns ([(mark, tag or None, line)], has_no_findings_line).
+    """
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    findings, no_findings, in_fence = [], False, False
+    for line in text.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = PANEL_ITEM.match(line)
+        if m:
+            tag = PANEL_TAG.match(m.group(2))
+            findings.append((m.group(1).lower(), tag.group(1) if tag else None, line.strip()))
+        elif line.strip() == "No findings.":
+            no_findings = True
+    return findings, no_findings
+
+
 def check_panel(ctx: Context):
     if ctx.change_dir is None:
         return "SKIP", "no change"
     panel = ctx.change_dir / "panel.md"
     if not panel.exists():
         return ("FAIL", "tier 2 needs panel.md") if ctx.tier == 2 else ("SKIP", "no panel.md")
-    open_critical = [b for mark, b in item_blocks(panel.read_text())
-                     if mark == " " and re.search(r"\[critical\]", b, re.I)]
+    findings, no_findings = panel_findings(panel.read_text())
+    if not findings:
+        return ("PASS", "No findings.") if no_findings else \
+            ("FAIL", "no findings in checklist format (`- [ ] [critical|major|minor] ...`, or `No findings.`)")
+    untagged = [line for _, tag, line in findings if tag is None]
+    if untagged:
+        return "FAIL", f"untagged finding(s), need [critical|major|minor] first: {untagged[:3]}"
+    open_critical = [line for mark, tag, line in findings if mark == " " and tag == "critical"]
     if open_critical:
         return "FAIL", f"{len(open_critical)} open critical finding(s) in panel.md"
-    return "PASS", "no open critical findings"
+    unresolved = [line for mark, tag, line in findings
+                  if mark == "x" and tag in ("critical", "major")
+                  and not re.search(r"Resolved:|Declined", line)]
+    if unresolved:
+        return "FAIL", f"ticked critical/major finding(s) without Resolved: or Declined: {unresolved[:3]}"
+    return "PASS", f"{len(findings)} finding(s), no open criticals"
 
 
 def check_tasks(ctx: Context):
@@ -242,8 +294,9 @@ def check_tests_with_code(ctx: Context):
     src_globs, test_globs = ctx.cfg.get("source_globs") or [], ctx.cfg.get("test_globs") or []
     if not src_globs:
         return "WARN", "lifecycle.source_globs is empty; gate not active"
+    managed = ctx.cfg.get("managed_paths") or []
     tests = [f for f in ctx.changed if matches(f, test_globs)]
-    source = [f for f in ctx.changed if matches(f, src_globs) and f not in tests]
+    source = [f for f in ctx.changed if matches(f, src_globs) and f not in tests and not matches(f, managed)]
     if source and not tests:
         if overridden(ctx, "tests_with_code"):
             return "WARN", "source changed without tests (overridden)"
@@ -257,7 +310,8 @@ def check_size(ctx: Context):
     budget = int(ctx.cfg.get("size_budget") or 0)
     if not budget:
         return "SKIP", "no size_budget"
-    exclude = (ctx.cfg.get("size_exclude") or []) + (ctx.cfg.get("test_globs") or []) + ["openspec/**"]
+    exclude = ((ctx.cfg.get("size_exclude") or []) + (ctx.cfg.get("test_globs") or [])
+               + (ctx.cfg.get("managed_paths") or []) + ["openspec/**"])
     total = 0
     for line in git("diff", "--numstat", ctx.base).splitlines():
         added, deleted, path = line.split("\t", 2)
@@ -387,6 +441,7 @@ def main() -> int:
     body, labels = pr_event()
     ctx = Context(cfg=load_config(), base=resolve_base(args.base), changed=[], pr_body=body,
                   labels=labels, in_ci=bool(os.environ.get("CI")))
+    ctx.cfg = with_base_exemptions(ctx.cfg, ctx.base)
     ctx.changed = changed_files(ctx.base)
     # Local override, e.g. LIFECYCLE_OVERRIDE="size_budget: generated client"; CI uses PR labels.
     if os.environ.get("LIFECYCLE_OVERRIDE") and not ctx.in_ci:

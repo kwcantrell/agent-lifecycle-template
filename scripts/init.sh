@@ -147,6 +147,10 @@ lc = dst.setdefault("lifecycle", {})
 defaults = dict(tpl["lifecycle"])
 defaults["commands"] = {k: "" for k in defaults["commands"]}  # the template's own; never copied
 defaults["source_globs"] = []
+# Exact files init.sh installs: vendored code, not the target's source.
+defaults["managed_paths"] = ["scripts/check-change.sh", "scripts/sync-skills.sh",
+                             "scripts/lib/check_change.py", ".claude/hooks/guard-approval.sh",
+                             ".claude/hooks/stop-check.sh"]
 for k, v in defaults.items():
     lc.setdefault(k, v)
 for k in ("test", "lint", "typecheck", "audit", "build"):

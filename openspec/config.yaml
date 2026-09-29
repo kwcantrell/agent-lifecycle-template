@@ -40,8 +40,14 @@ lifecycle:
   # Files the release workflow attests (glob, relative to the repo root).
   release_artifacts: "dist/*"
   # Which paths count as source and which as tests, for the tests-with-code gate.
+  # Test folders match at any depth. Files under them are also left out of the size budget.
   source_globs: ["scripts/**", ".claude/hooks/**"]
-  test_globs: ["test/**", "tests/**", "**/*_test.*", "**/*.test.*", "**/*.spec.*", "**/test_*"]
+  test_globs: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*_test.*", "**/*.test.*", "**/*.spec.*", "**/test_*"]
+  # Exact files the lifecycle installs. tests-with-code and size ignore them. Empty here because
+  # they are this repo's own source; init.sh fills it in targets.
+  # managed_paths, test_globs, size_exclude and size_budget are read from the base branch, so a
+  # PR can't exempt itself.
+  managed_paths: []
   # Changed-line budget per PR. Tests, openspec/ and these paths don't count.
   size_budget: 400
   size_exclude: ["**/*.lock", "**/package-lock.json", "**/pnpm-lock.yaml", "**/go.sum", "docs/**"]

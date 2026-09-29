@@ -40,6 +40,14 @@ These live in the forge, not the repo, so the template can't apply them:
 - With a single collaborator, code owner review can only be met through the admin's
   bypass on PRs, since GitHub doesn't count an author's own approval. Anything holding the
   admin's token, an agent included, has that bypass. Real separation needs a second reviewer.
+- The panel gate checks structure, not honesty. A real critical tagged `[minor]`, or
+  `No findings.` written over findings discussed in prose, passes. The human approver is the
+  control.
+- Files under test folders count as tests and are left out of the size budget, so source hidden
+  in a `tests/` folder evades both gates. Code review is the control.
+- Exemptions (`managed_paths`, `test_globs`, `size_exclude`, `size_budget`) come from the base
+  branch, so a PR can't exempt itself. A later PR can still widen them where no human owns
+  `openspec/config.yaml`. A modified copy of the vendored checker isn't detected.
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).

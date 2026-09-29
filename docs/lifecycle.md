@@ -53,12 +53,15 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | evidence | | x | x | A ticked task has no `Evidence:` |
 | commands | | x | x | lint, typecheck or test fails |
 | approval | | | x | Tier 1-2 proposal lacks `Approved-by:` |
-| panel | | | x | Tier 2 lacks panel.md, or a `- [ ] [critical]` finding is open |
+| panel | | | x | Tier 2 lacks panel.md. Or panel.md has no `- [ ] [severity]` findings and no `No findings.` line, a finding lacks a `[critical\|major\|minor]` tag, a critical is open, or a ticked critical or major lacks `Resolved:` or `Declined` |
 | tasks | | | x | An unticked task remains |
 | artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
-| tests-with-code | | | x | Source changed without a test change (label `no-test-needed` overrides) |
-| size | | | x | Over `size_budget` changed lines (label `size-override` overrides) |
+| tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
+| size | | | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude` (label `size-override` overrides) |
 | audit | | | x | `lifecycle.commands.audit` fails |
+
+`managed_paths`, `test_globs`, `size_exclude` and `size_budget` are read from the base branch's
+config, so a PR can't exempt itself. Changes to them apply from the next PR.
 
 The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
 CI runs `pr` on pull requests.
