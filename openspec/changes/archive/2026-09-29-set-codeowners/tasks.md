@@ -17,6 +17,6 @@
 - [x] 3.1 Make 1.2 pass: set `.github/CODEOWNERS` to `@kwcantrell` and update its header comment
   Evidence: `python3 -m unittest discover -s tests` -> `Ran 32 tests ... OK`
 - [x] 3.2 Add the solo-owner bypass gap to `docs/security.md` Known gaps, and CODEOWNERS to `docs/lifecycle.md` Setup
-  Evidence: `grep -c "bypass on PRs" docs/security.md` -> 1; `grep -c "renders .github/CODEOWNERS" docs/lifecycle.md` -> 1
+  Evidence: `grep -c "bypass on PRs" docs/security.md` -> 1; `grep -c 'renders \`.github/CODEOWNERS\`' docs/lifecycle.md` -> 1
 - [x] 3.3 Run `scripts/check-change.sh --stage hook` and record the result as `Evidence:` on each task
   Evidence: `scripts/check-change.sh --stage hook` -> all PASS (openspec, workflows, skills-sync, guide-size, change tier 2, risk-floor, evidence, commands)
