@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ ARCHIVE = "openspec/changes/archive"
 STAGES = {
     "commit": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
     "hook": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
-             "evidence", "commands"],
+             "evidence", "size", "commands"],
     "pr": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
            "approval", "panel", "tasks", "evidence", "artifacts-first", "tests-with-code",
            "size", "commands", "audit"],
@@ -76,6 +77,7 @@ class Context:
     pr_body: str = ""
     labels: set[str] = field(default_factory=set)
     in_ci: bool = False
+    stage: str = "pr"
     change_dir: Path | None = None
     tier: int | None = None
     grandfathered: bool = False
@@ -382,6 +384,29 @@ def check_tests_with_code(ctx: Context):
     return "PASS", f"{len(source)} source / {len(tests)} test file(s)"
 
 
+def untracked_lines(path: Path, cap: int) -> int:
+    """Lines as git numstat counts them for a new file; 0 for binary or non-regular; stops past cap."""
+    if path.is_symlink():
+        return 1  # git counts a symlink's target path as one line
+    try:
+        if not stat.S_ISREG(path.stat().st_mode):
+            return 0
+        with open(path, "rb") as f:
+            head = f.read(8000)
+            if b"\0" in head:
+                return 0  # binary, as git decides it
+            count, last, chunk = 0, b"", head
+            while chunk:
+                count += chunk.count(b"\n")
+                last = chunk
+                if count > cap:
+                    return count
+                chunk = f.read(1 << 20)
+            return count + (1 if last and not last.endswith(b"\n") else 0)
+    except OSError:
+        return 0
+
+
 def check_size(ctx: Context):
     if not ctx.base:
         return "SKIP", "no base to diff against"
@@ -396,9 +421,16 @@ def check_size(ctx: Context):
         if added == "-" or matches(path, exclude):
             continue
         total += int(added) + int(deleted)
+    if not ctx.in_ci:  # CI counts committed diffs only; locally, new files count before commit
+        for path in git("ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+            if path and not matches(path, exclude):
+                total += untracked_lines(ROOT / path, budget - total)
     if total > budget:
         if overridden(ctx, "size_budget"):
             return "WARN", f"{total} changed lines > {budget} (overridden)"
+        if ctx.stage == "hook":
+            return "WARN", (f"{total} changed lines > budget {budget}; the PR gate will fail: split, "
+                            "or ask the human for `size-override`")
         return "FAIL", f"{total} changed lines > budget {budget}; split the change"
     return "PASS", f"{total}/{budget} changed lines"
 
@@ -521,6 +553,7 @@ def main() -> int:
     body, labels = pr_event()
     ctx = Context(cfg=load_config(), base=resolve_base(args.base), changed=[], pr_body=body,
                   labels=labels, in_ci=bool(os.environ.get("CI")))
+    ctx.stage = "custom" if args.only else args.stage
     ctx.cfg = with_base_exemptions(ctx.cfg, ctx.base)
     ctx.changed = changed_files(ctx.base)
     # Local override, e.g. LIFECYCLE_OVERRIDE="size_budget: generated client"; CI uses PR labels.
@@ -543,7 +576,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL":
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name == "size"):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 
