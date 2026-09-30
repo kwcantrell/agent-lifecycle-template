@@ -15,6 +15,12 @@ hook runs `check-change.sh --stage hook` before Claude Code may finish with unco
 After three blocked stops it lets the agent stop and tell the human, so a broken environment
 can't trap it. CI still enforces the gates.
 
+Amended 2026-09-29 (stop-hook-warnings): when the checks pass with warnings, the hook shows them
+to the human on every stop (`systemMessage`). Only the size warning, the one the agent can act on
+mid-change, also blocks the stop once per session, so the agent reports it. Warning text is
+repo-controlled, so it's reduced to a safe character set, capped, and passed as untrusted data
+after the instruction.
+
 ## Evidence
 
 - Anthropic: "Give Claude a check it can run" and "If you can't verify it, don't ship it". It
