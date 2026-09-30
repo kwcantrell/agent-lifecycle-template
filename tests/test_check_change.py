@@ -317,6 +317,81 @@ LEGACY = {"openspec/changes/legacy/proposal.md": "# Legacy\n\n## Why\n\nPredates
 GF_CHECKS = "change,risk-floor,approval,panel,tasks,evidence,artifacts-first,size"
 
 
+class YamlParseTest(unittest.TestCase):
+    """Every YAML file must parse; the pre-commit config must also have a loadable shape."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def gates(self, *args: str, ci: bool = False) -> tuple[int, str]:
+        env = {"CI": "true" if ci else "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        r = sh(self.repo.path, "scripts/check-change.sh", *(args or ("--only", "yaml")), env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_broken_yaml_fails_with_line(self):
+        self.repo = Repo()
+        self.repo.write(".pre-commit-config.yaml",
+                        "repos:\n- repo: local\n  hooks:\n  - id: x\n    name: gates (hook stage: tests)\n")
+        rc, out = self.gates()
+        self.assertIn("FAIL  yaml", out)
+        self.assertIn(".pre-commit-config.yaml:5", out)
+
+    def test_tags_and_multidoc_pass(self):
+        self.repo = Repo()
+        self.repo.write("cfn.yaml", "a: !Ref b\n---\nc: !GetAtt x.y\nd: !If [a, b]\ne: !Sub '${x}'\n")
+        self.repo.write("vault.yml", "secret: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  6162\n")
+        rc, out = self.gates()
+        self.assertIn("PASS  yaml", out)
+
+    def test_constructor_and_nesting_errors_fail_per_file(self):
+        self.repo = Repo()
+        self.repo.write("bad_int.yaml", "a: !!int abc\n")
+        self.repo.write("deep.yaml", "[" * 100000 + "]" * 100000 + "\n")
+        (self.repo.path / "latin1.yaml").write_bytes(b"a: \xff\xfe\n")
+        rc, out = self.gates()
+        self.assertIn("FAIL  yaml", out)
+        for name in ("bad_int.yaml", "deep.yaml", "latin1.yaml"):
+            self.assertIn(name, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_preexisting_broken_warns_in_hook_fails_in_pr(self):
+        self.repo = Repo(base_files={"old.yaml": "a: [\n"})
+        self.repo.write("src/app.py", "x = 2\n")  # the change touches something else
+        rc, out = self.gates("--stage", "hook", "--quiet")
+        self.assertIn("WARN  yaml", out)
+        self.assertNotIn("FAIL  yaml", out)
+        rc, out = self.gates("--stage", "pr")
+        self.assertIn("FAIL  yaml", out)
+        self.assertIn("old.yaml", out)
+
+    def test_symlinks_skipped(self):
+        self.repo = Repo()
+        os.symlink("missing.yml", self.repo.path / "link.yml")
+        self.repo.commit("dangling link")
+        rc, out = self.gates()
+        self.assertIn("PASS  yaml", out)
+
+    def test_precommit_shape_checked(self):
+        self.repo = Repo()
+        for text in ("repos: {}\n", "repos:\n- repo: local\n", "repos:\n- repo: local\n  hooks:\n  - name: x\n"):
+            with self.subTest(text=text):
+                self.repo.write(".pre-commit-config.yaml", text)
+                rc, out = self.gates()
+                self.assertIn("FAIL  yaml", out)
+                self.assertIn(".pre-commit-config.yaml", out)
+        self.repo.write(".pre-commit-config.yaml", "repos:\n- repo: local\n  hooks:\n  - id: x\n")
+        rc, out = self.gates()
+        self.assertIn("PASS  yaml", out)
+
+    def test_untracked_checked_locally_not_in_ci(self):
+        self.repo = Repo()
+        self.repo.write("new.yaml", "a: [\n")
+        rc, out = self.gates()
+        self.assertIn("FAIL  yaml", out)
+        rc, out = self.gates(ci=True)
+        self.assertIn("PASS  yaml", out)
+
+
 class UntrackedSizeTest(unittest.TestCase):
     """Locally, size counts untracked files like git would; the hook stage only warns."""
 
