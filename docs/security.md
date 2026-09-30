@@ -68,6 +68,10 @@ These live in the forge, not the repo, so the template can't apply them:
 - The adoption blocks' precedence line ("the lifecycle gates win") is advisory text. Codex reads
   AGENTS.md but not `@` imports. An agent could apply the proposals despite the README telling
   it not to; the install PR's human review is the control.
+- The Stop hook's once-per-session size block uses a marker in `$TMPDIR`, which an agent can create
+  or delete, as it can the failure counter. That only affects the agent-facing block: the
+  `systemMessage` to the human is unconditional. Warning text (file names, YAML keys) is untrusted,
+  so the hook reduces it to a safe character set and caps it before the model sees it.
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).

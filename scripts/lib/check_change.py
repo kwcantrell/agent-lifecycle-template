@@ -718,6 +718,10 @@ CHECKS = {
 }
 
 
+# WARNs printed even under --quiet (the Stop hook and pre-push read them). Informational ones, such
+# as unconfigured commands, stay quiet.
+QUIET_WARN = {"size", "yaml", "adr", "change", "risk-floor"}
+
 # Checks that read the tier or change directory `change` resolves.
 NEEDS_CHANGE = {"risk-floor", "approval", "panel", "tasks", "evidence", "artifacts-first"}
 # Skipped for a grandfathered change; risk-floor still runs and warns.
@@ -768,7 +772,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml", "adr")):
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name in QUIET_WARN):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 

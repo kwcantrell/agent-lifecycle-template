@@ -68,7 +68,9 @@ config, so a PR can't exempt itself. Changes to them apply from the next PR.
 Untracked scratch files (notes, logs) count toward size locally. Gitignore them, or list them in
 `size_exclude`, if the warning gets noisy.
 
-The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
+The Stop hook runs the `hook` stage. It blocks on failures, shows warnings to the human on every
+stop, and blocks once per session for the size warning so the agent reports it. pre-commit runs
+`commit` on commit and `hook` on push.
 CI runs `pr` on pull requests.
 
 ## Setup
