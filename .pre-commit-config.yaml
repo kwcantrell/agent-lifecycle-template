@@ -23,7 +23,7 @@ repos:
         always_run: true
         stages: [pre-commit]
       - id: lifecycle-push
-        name: lifecycle gates (hook stage: tests, lint, typecheck)
+        name: "lifecycle gates (hook stage: tests, lint, typecheck)"
         entry: scripts/check-change.sh --stage hook --quiet
         language: system
         pass_filenames: false
