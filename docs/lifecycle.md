@@ -48,8 +48,8 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | workflows | x | x | x | An action isn't SHA-pinned, or a workflow lacks top-level `permissions:` |
 | skills-sync | x | x | x | `.agents/skills` differs from `.claude/skills` |
 | guide-size | x | x | x | AGENTS.md is over its line budget |
-| change | x | x | x | More than one change on the branch, no `Tier:` line, or tier 1-2 without a change |
-| risk-floor | x | x | x | A high-risk path is touched below tier 2 |
+| change | x | x | x | More than one change on the branch, no `Tier:` line, tier 1-2 without a change, or a tier 0 change dir. A grandfathered change WARNs, and in CI fails unless the PR body says `Grandfathered: <id>` |
+| risk-floor | x | x | x | A high-risk path is touched below tier 2 (a grandfathered change WARNs with the paths) |
 | evidence | | x | x | A ticked task has no `Evidence:` |
 | commands | | x | x | lint, typecheck or test fails |
 | approval | | | x | Tier 1-2 proposal lacks `Approved-by:` |
@@ -57,7 +57,7 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | tasks | | | x | An unticked task remains |
 | artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
 | tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
-| size | | | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude` (label `size-override` overrides) |
+| size | | | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude` (label `size-override` overrides; skipped for a grandfathered change) |
 | audit | | | x | `lifecycle.commands.audit` fails |
 
 `managed_paths`, `test_globs`, `size_exclude` and `size_budget` are read from the base branch's
@@ -77,6 +77,21 @@ CI runs `pr` on pull requests.
 5. Commit the install as a tier 2 change, run through the lifecycle itself.
 
 Presets for common stacks may come later. Until then, init.sh asks for the commands.
+
+### Grandfathering in-flight changes
+
+Changes already in flight when a repo adopts the lifecycle have no `Tier:` line or checklist
+panel, so they would fail every gate. To let one finish (ADR 0014):
+
+1. A PR of its own adds the id to `lifecycle.grandfathered_changes` in `openspec/config.yaml`.
+   It touches a high-risk path, so it's tier 2 and a human approves it. The change's directory
+   must already be on main.
+2. The change's branch merges main, so its merge-base has both the list and the directory.
+3. The change's PR body says `Grandfathered: <id>`.
+
+The change then skips the tier, approval, panel, tasks, evidence, artifacts-first and size gates.
+Every other gate runs, and risk-floor warns about any high-risk paths it touches. Once it's
+archived and merged, the entry no longer matches anything. Remove it in a later PR.
 
 ## Operating
 

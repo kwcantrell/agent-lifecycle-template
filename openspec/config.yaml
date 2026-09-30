@@ -48,6 +48,9 @@ lifecycle:
   # managed_paths, test_globs, size_exclude and size_budget are read from the base branch, so a
   # PR can't exempt itself.
   managed_paths: []
+  # Changes in flight before adoption. Read from the merge-base only. Entries die when the
+  # change is archived. See docs/lifecycle.md "Grandfathering".
+  grandfathered_changes: []
   # Changed-line budget per PR. Tests, openspec/ and these paths don't count.
   size_budget: 400
   size_exclude: ["**/*.lock", "**/package-lock.json", "**/pnpm-lock.yaml", "**/go.sum", "docs/**"]

@@ -26,7 +26,7 @@ def sh(cwd: Path, *args: str, env: dict | None = None, stdin: str | None = None)
 
 
 class Repo:
-    def __init__(self, lifecycle: dict | None = None) -> None:
+    def __init__(self, lifecycle: dict | None = None, base_files: dict | None = None) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name)
         for rel in ("scripts", "openspec/config.yaml", "AGENTS.md", ".claude/hooks"):
@@ -42,8 +42,11 @@ class Repo:
             data = yaml.safe_load(cfg.read_text())
             data["lifecycle"].update(lifecycle)
             cfg.write_text(yaml.safe_dump(data, sort_keys=False))
-        (self.path / "openspec/changes/archive").mkdir(parents=True)
-        (self.path / "openspec/specs").mkdir(parents=True)
+        for rel, text in (base_files or {}).items():  # files that exist on the base branch
+            (self.path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.path / rel).write_text(text)
+        (self.path / "openspec/changes/archive").mkdir(parents=True, exist_ok=True)
+        (self.path / "openspec/specs").mkdir(parents=True, exist_ok=True)
         (self.path / "src").mkdir()
         (self.path / "src/app.py").write_text("x = 1\n")
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "config", "user.email", "t@example.com"],
@@ -308,6 +311,132 @@ class ExemptionTest(unittest.TestCase):
         self.repo.commit("exempt my own source")
         rc, out = self.repo.check("tests-with-code")
         self.assertIn("FAIL  tests-with-code", out, out)
+
+
+LEGACY = {"openspec/changes/legacy/proposal.md": "# Legacy\n\n## Why\n\nPredates the lifecycle.\n"}
+GF_CHECKS = "change,risk-floor,approval,panel,tasks,evidence,artifacts-first,size"
+
+
+class GrandfatherTest(unittest.TestCase):
+    """In-flight changes that predate the lifecycle, bounded by what exists on the merge-base."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def grandfathered_repo(self, **lifecycle) -> Repo:
+        self.repo = Repo(lifecycle={"grandfathered_changes": ["legacy"], **lifecycle}, base_files=LEGACY)
+        self.repo.write("openspec/changes/legacy/tasks.md", "- [ ] 1.1 still open\n")
+        return self.repo
+
+    def gates(self, only: str, body: str | None = None) -> tuple[int, str]:
+        env = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        if body is not None:
+            event = self.repo.path / "event.json"
+            event.write_text(json.dumps({"pull_request": {"body": body, "labels": []}}))
+            env["GITHUB_EVENT_PATH"] = str(event)
+        r = sh(self.repo.path, "scripts/check-change.sh", "--only", only, env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_grandfathered_change_skips_change_gates(self):
+        self.grandfathered_repo()
+        rc, out = self.gates(GF_CHECKS)
+        self.assertIn("WARN  change", out)
+        self.assertIn("grandfathered", out)
+        self.assertIn("PASS  risk-floor", out)
+        for name in ("approval", "panel", "tasks", "evidence", "artifacts-first", "size"):
+            self.assertRegex(out, rf"SKIP  {name}\s+grandfathered", out)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_grandfathered_risk_floor_warns(self):
+        self.grandfathered_repo()
+        self.repo.write("scripts/x.sh", "echo\n")
+        rc, out = self.gates("change,risk-floor")
+        self.assertRegex(out, r"WARN  risk-floor .*scripts/x.sh", out)
+        self.assertEqual(rc, 0, out)
+
+    def test_grandfathered_other_gates_still_run(self):
+        self.grandfathered_repo(source_globs=["src/**"])
+        import yaml
+        cfg = self.repo.path / "openspec/config.yaml"
+        data = yaml.safe_load(cfg.read_text())
+        data["lifecycle"]["commands"]["test"] = "exit 3"
+        cfg.write_text(yaml.safe_dump(data, sort_keys=False))
+        self.repo.write("src/app.py", "x = 2\n")
+        rc, out = self.gates("change,tests-with-code,commands")
+        self.assertIn("FAIL  tests-with-code", out)
+        self.assertIn("FAIL  commands", out)
+        self.assertEqual(rc, 1, out)
+
+    def test_grandfathered_needs_pr_declaration_in_ci(self):
+        self.grandfathered_repo()
+        rc, out = self.gates("change", body="Tier: 2\n")
+        self.assertIn("FAIL  change", out)
+        self.assertIn("Grandfathered: legacy", out)
+        rc, out = self.gates("change,approval", body="Tier: 2\nGrandfathered: legacy\n")
+        self.assertIn("WARN  change", out)  # the PR-body Tier is ignored for a grandfathered change
+        self.assertIn("SKIP  approval", out)
+        self.assertEqual(rc, 0, out)
+
+    def test_grandfathered_archive_path(self):
+        self.grandfathered_repo()
+        self.repo.commit("work")
+        sh(self.repo.path, "git", "mv", "openspec/changes/legacy", "openspec/changes/archive/2026-10-01-legacy")
+        rc, out = self.gates("change")
+        self.assertIn("WARN  change", out)
+        self.assertIn("archive/2026-10-01-legacy", out)
+
+    def test_new_change_reusing_id_not_grandfathered(self):
+        self.repo = Repo(lifecycle={"grandfathered_changes": ["legacy"]})
+        self.repo.write("openspec/changes/legacy/proposal.md", "# New\n\n## Why\n\nNew.\n")
+        rc, out = self.gates("change")
+        self.assertIn("FAIL  change", out)
+        self.assertIn("listed, but not grandfathered", out)
+
+    def test_pr_own_list_ignored(self):
+        # (a) base has a lifecycle block without the key; the PR adds it.
+        self.repo = Repo(base_files=LEGACY)
+        cfg = self.repo.path / "openspec/config.yaml"
+        cfg.write_text(cfg.read_text().replace("lifecycle:\n", "lifecycle:\n  grandfathered_changes: [legacy]\n", 1))
+        self.repo.write("openspec/changes/legacy/tasks.md", "- [ ] open\n")
+        rc, out = self.gates("change")
+        self.assertIn("FAIL  change", out)
+        self.repo.close()
+        # (b) base has no lifecycle block at all; the PR adds the whole block.
+        self.repo = Repo(base_files={**LEGACY, "openspec/config.yaml": "schema: spec-driven\n"})
+        shutil.copy(TEMPLATE / "openspec/config.yaml", self.repo.path / "openspec/config.yaml")
+        cfg = self.repo.path / "openspec/config.yaml"
+        cfg.write_text(cfg.read_text().replace("lifecycle:\n", "lifecycle:\n  grandfathered_changes: [legacy]\n", 1))
+        self.repo.write("openspec/changes/legacy/tasks.md", "- [ ] open\n")
+        rc, out = self.gates("change")
+        self.assertIn("FAIL  change", out)
+
+    def test_malformed_list_grandfathers_nothing(self):
+        for value in (None, "legacy", "leg"):
+            with self.subTest(value=value):
+                self.repo = Repo(lifecycle={"grandfathered_changes": value}, base_files=LEGACY)
+                self.repo.write("openspec/changes/legacy/tasks.md", "- [ ] open\n")
+                rc, out = self.gates("change")
+                self.assertIn("FAIL  change", out)
+                self.assertNotIn("Traceback", out)
+                self.repo.close()
+        self.repo = Repo()  # for tearDown
+
+    def test_grandfathered_plus_second_change_fails(self):
+        self.grandfathered_repo()
+        self.repo.write("openspec/changes/other/proposal.md", "# O\n\nTier: 1\n")
+        rc, out = self.gates("change")
+        self.assertIn("FAIL  change", out)
+        self.assertIn("one change per branch", out)
+
+    def test_tier0_change_dir_fails(self):
+        self.repo = Repo()
+        self.repo.change(0)
+        rc, out = self.gates("change")
+        self.assertIn("FAIL  change", out)
+        self.assertIn("tier 0 needs no OpenSpec change", out)
+        rc, out = self.gates("change", body="Tier: 0\n")
+        self.assertIn("tier 0 needs no OpenSpec change", out)
 
 
 class OnlyTest(unittest.TestCase):
