@@ -140,14 +140,43 @@ def resolve_base(explicit: str | None) -> str | None:
 
 
 def changed_files(base: str | None) -> list[str]:
+    # NUL-separated so a path is read whole; --no-renames so a move lists its old path too.
     files: set[str] = set()
     if base:
-        files.update(git("diff", "--name-only", base).split())
+        files.update(git("diff", "--name-only", "--no-renames", "-z", base).split("\0"))
     else:  # no base (fresh repo): everything tracked counts as changed
-        files.update(git("ls-files").split())
-    files.update(git("diff", "--name-only", "--cached").split())
-    files.update(git("ls-files", "--others", "--exclude-standard").split())
+        files.update(git("ls-files", "-z").split("\0"))
+    files.update(git("diff", "--name-only", "--no-renames", "-z", "--cached").split("\0"))
+    files.update(git("ls-files", "--others", "--exclude-standard", "-z").split("\0"))
     return sorted(f for f in files if f)
+
+
+ARCHIVE_NAME = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
+
+
+def exempt_archives(base: str | None) -> set[str]:
+    """Archived change dirs on the merge-base whose only difference is an in-place tasks.md edit.
+
+    Those edits maintain history; they are not the branch's change. Read from raw records so a
+    move, a type change or a whitespace-laden name can't pass for a tasks.md edit.
+    """
+    if not base:
+        return set()
+    records: dict[str, list[tuple[str, str, str, str]]] = {}
+    fields = git("diff", "--raw", "--no-renames", "-z", base).split("\0")
+    for meta, path in zip(fields[0::2], fields[1::2]):
+        old_mode, new_mode, _, _, status = meta.lstrip(":").split(" ")
+        parts = path.split("/")
+        if path.startswith(ARCHIVE + "/") and len(parts) > 4:
+            records.setdefault("/".join(parts[:4]), []).append((status, path, old_mode, new_mode))
+    untracked = git("ls-files", "--others", "--exclude-standard", "-z").split("\0")
+    exempt = set()
+    for d, recs in records.items():
+        if (ARCHIVE_NAME.fullmatch(d.split("/")[-1]) and on_base(base, d)
+                and recs == [("M", f"{d}/tasks.md", "100644", "100644")]
+                and not any(f.startswith(d + "/") for f in untracked)):
+            exempt.add(d)
+    return exempt
 
 
 def pr_event() -> tuple[str, set[str]]:
@@ -177,6 +206,14 @@ def item_blocks(text: str) -> list[tuple[str, str]]:
 # Each check returns (status, message); status is PASS, FAIL, WARN or SKIP.
 
 def check_change(ctx: Context):
+    exempt = exempt_archives(ctx.base)
+    status, msg = _check_change(ctx, exempt)
+    if exempt:  # on every result, so a reviewer always sees history edits
+        msg += f"; not counted: tasks.md-only edits to existing archive(s) {sorted(exempt)}"
+    return status, msg
+
+
+def _check_change(ctx: Context, exempt: set[str]):
     dirs = set()
     for f in ctx.changed:
         parts = f.split("/")
@@ -184,7 +221,7 @@ def check_change(ctx: Context):
             dirs.add("/".join(parts[:4]))
         elif f.startswith(CHANGES + "/") and len(parts) > 3 and parts[2] != "archive":
             dirs.add("/".join(parts[:3]))
-    dirs = {d for d in dirs if (ROOT / d).is_dir()}
+    dirs = {d for d in dirs if (ROOT / d).is_dir()} - exempt
     if len(dirs) > 1:
         return "FAIL", f"one change per branch; found {sorted(dirs)}"
     if dirs:

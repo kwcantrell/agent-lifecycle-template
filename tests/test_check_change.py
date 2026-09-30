@@ -557,5 +557,235 @@ class GlobTest(unittest.TestCase):
         self.assertTrue(matches("pkg/x.test.ts", ["**/*.test.*"]))
 
 
+def run_gates(repo: Repo, only: str, body: str | None = None) -> tuple[int, str]:
+    """Like Repo.check, but optionally with a PR event body."""
+    env = {"CI": "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+    if body is not None:
+        event = repo.path / "event.json"
+        event.write_text(json.dumps({"pull_request": {"body": body, "labels": []}}))
+        env["GITHUB_EVENT_PATH"] = str(event)
+    r = sh(repo.path, "scripts/check-change.sh", "--only", only, env=env)
+    return r.returncode, r.stdout + r.stderr
+
+
+class ChangedPathsTest(unittest.TestCase):
+    """Changed paths are read whole, and a rename lists both sides."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def test_path_with_space_read_whole(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                self.repo = Repo()
+                self.repo.write("scripts/a b.sh", "echo\n")
+                if committed:
+                    self.repo.commit("add")
+                rc, out = self.repo.check("risk-floor")
+                self.assertIn("'scripts/a b.sh'", out, out)
+                self.assertNotIn("'scripts/a'", out, out)
+                self.repo.close()
+        self.repo = Repo()
+
+    def test_rename_lists_both_sides(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                self.repo = Repo(base_files={"scripts/x.sh": "echo\n"})
+                sh(self.repo.path, "git", "mv", "scripts/x.sh", "x.sh")
+                if committed:
+                    self.repo.commit("move")
+                rc, out = self.repo.check("risk-floor")
+                self.assertIn("FAIL  risk-floor", out, out)
+                self.assertIn("scripts/x.sh", out, out)
+                self.repo.close()
+        self.repo = Repo()
+
+
+ARCH = "openspec/changes/archive"
+
+
+def legacy_archive(name: str, tasks: bool = True) -> dict:
+    """An archived change that predates the lifecycle: no Tier line, one unticked task."""
+    files = {f"{ARCH}/{name}/proposal.md": f"# {name}\n\n## Why\n\nOld.\n"}
+    if tasks:
+        files[f"{ARCH}/{name}/tasks.md"] = "## 1. Old\n\n- [ ] 1.1 Deferred\n"
+    return files
+
+
+TICKED = "## 1. Old\n\n- [x] 1.1 Deferred *(not done: ticked for validation)*\n"
+NOT_COUNTED = "not counted: tasks.md-only edits"
+
+
+class ArchiveTaskEditTest(unittest.TestCase):
+    """tasks.md-only edits to archives on the merge-base are not the branch's change."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def make(self, *names: str, **lifecycle) -> Repo:
+        base: dict = {}
+        for n in names:
+            base.update(legacy_archive(n))
+        self.repo = Repo(lifecycle=lifecycle or None, base_files=base)
+        return self.repo
+
+    def tick(self, name: str) -> None:
+        self.repo.write(f"{ARCH}/{name}/tasks.md", TICKED)
+
+    def assertCounted(self, name: str) -> None:
+        """A counted legacy archive becomes the branch's change and fails for its missing Tier line."""
+        rc, out = self.repo.check("change")
+        self.assertIn("FAIL  change", out, out)
+        self.assertIn(f"{ARCH}/{name}", out.split(NOT_COUNTED)[0], out)
+        self.assertNotIn(NOT_COUNTED, out, out)
+
+    # Exempt
+
+    def test_tasks_only_edits_to_two_archives_pass(self):
+        self.make("2026-01-01-old1", "2026-01-02-old2")
+        self.tick("2026-01-01-old1")
+        self.tick("2026-01-02-old2")
+        self.repo.commit("tick legacy archives")
+        rc, out = self.repo.check("change")
+        self.assertIn("PASS  change", out, out)
+        self.assertIn("tier 0", out, out)
+        self.assertIn(NOT_COUNTED, out, out)
+        self.assertIn("2026-01-01-old1", out, out)
+        self.assertIn("2026-01-02-old2", out, out)
+        self.assertEqual(rc, 0, out)
+
+    def test_archive_edit_alongside_own_change(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        self.repo.change(1)
+        rc, out = self.repo.check("change")
+        self.assertIn("PASS  change", out, out)
+        self.assertIn("tier 1 (openspec/changes/add-thing)", out, out)
+        self.assertIn(NOT_COUNTED, out, out)
+        self.assertIn("2026-01-01-old1", out, out)
+
+    def test_exempt_and_counted_archive(self):
+        self.make("2026-01-01-old1", "2026-01-02-old2")
+        self.tick("2026-01-01-old1")
+        self.repo.write(f"{ARCH}/2026-01-02-old2/proposal.md", "# old2\n\nTier: 1\nApproved-by: A 2026-01-02\n")
+        rc, out = self.repo.check("change")
+        self.assertIn("PASS  change", out, out)
+        self.assertIn(f"tier 1 ({ARCH}/2026-01-02-old2)", out, out)
+        self.assertIn("2026-01-01-old1", out.split(NOT_COUNTED)[1], out)
+
+    def test_note_survives_failure(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        self.repo.change(1)
+        self.repo.write("openspec/changes/other/proposal.md", "# O\n\nTier: 1\n")
+        rc, out = self.repo.check("change")
+        self.assertIn("FAIL  change", out, out)
+        self.assertIn("one change per branch", out, out)
+        self.assertNotIn("2026-01-01-old1", out.split(NOT_COUNTED)[0], out)
+        self.assertIn("2026-01-01-old1", out.split(NOT_COUNTED)[1], out)
+
+    def test_grandfathered_archive_tasks_only_is_exempt(self):
+        self.make("2026-01-01-legacy", grandfathered_changes=["legacy"])
+        self.tick("2026-01-01-legacy")
+        rc, out = run_gates(self.repo, "change", body="Tier: 0\n")  # CI, no Grandfathered line
+        self.assertIn("PASS  change", out, out)
+        self.assertIn(NOT_COUNTED, out, out)
+        self.assertEqual(rc, 0, out)
+
+    # Counted, as before
+
+    def test_archive_other_file_counts(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        self.repo.write(f"{ARCH}/2026-01-01-old1/proposal.md", "# old1\n\n## Why\n\nRewritten.\n")
+        self.assertCounted("2026-01-01-old1")
+
+    def test_file_moved_out_of_archive_counts(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        self.repo.commit("tick")
+        sh(self.repo.path, "git", "mv", f"{ARCH}/2026-01-01-old1/proposal.md", "moved.md")
+        rc, out = self.repo.check("change")
+        self.assertIn("FAIL  change", out, out)
+        self.assertNotIn(NOT_COUNTED, out, out)
+
+    def test_tasks_added_deleted_moved_or_symlinked_counts(self):
+        name, d = "2026-01-01-old1", f"{ARCH}/2026-01-01-old1"
+        for case in ("added", "deleted", "moved", "symlinked"):
+            with self.subTest(case=case):
+                base = legacy_archive(name, tasks=case != "added")
+                self.repo = Repo(base_files=base)
+                p = self.repo.path / d / "tasks.md"
+                if case == "added":
+                    self.repo.write(f"{d}/tasks.md", TICKED)
+                elif case == "deleted":
+                    p.unlink()
+                elif case == "moved":
+                    sh(self.repo.path, "git", "mv", f"{d}/tasks.md", f"{d}/notes.md")
+                else:
+                    p.unlink()
+                    p.symlink_to("proposal.md")
+                self.repo.commit(case)
+                rc, out = self.repo.check("change")
+                self.assertNotIn(NOT_COUNTED, out, out)
+                self.assertIn("FAIL  change", out, out)
+                self.repo.close()
+        self.repo = Repo()  # for tearDown
+
+    def test_hidden_name_beside_tasks_counts(self):
+        for committed in (False, True):  # untracked, then committed
+            with self.subTest(committed=committed):
+                self.make("2026-01-01-old1")
+                self.tick("2026-01-01-old1")
+                self.repo.commit("tick")
+                self.repo.write(f"{ARCH}/2026-01-01-old1/tasks.md x.txt", "smuggled\n")
+                if committed:
+                    self.repo.commit("hide")
+                self.assertCounted("2026-01-01-old1")
+                self.repo.close()
+        self.repo = Repo()
+
+    def test_non_archive_name_never_exempt(self):
+        for name in ("old-thing", "2026-01-01-Old", "2026-01-01-a_b"):
+            with self.subTest(name=name):
+                self.make(name)
+                self.tick(name)
+                self.assertCounted(name)
+                self.repo.close()
+        self.repo = Repo()
+
+    def test_new_archive_counts(self):
+        self.make("2026-01-01-old1")
+        self.repo.write(f"{ARCH}/2026-10-01-add-thing/proposal.md", "# Add\n\nTier: 1\nApproved-by: A 2026-10-01\n")
+        rc, out = self.repo.check("change")
+        self.assertIn(f"PASS  change           tier 1 ({ARCH}/2026-10-01-add-thing)", out, out)
+        self.assertNotIn(NOT_COUNTED, out, out)
+
+    def test_moved_in_flight_change_plus_exempt_edit(self):
+        base = legacy_archive("2026-01-01-old1")
+        base["openspec/changes/add-thing/proposal.md"] = "# Add\n\nTier: 1\nApproved-by: A 2026-10-01\n"
+        self.repo = Repo(base_files=base)
+        sh(self.repo.path, "git", "mv", "openspec/changes/add-thing", f"{ARCH}/2026-10-01-add-thing")
+        self.tick("2026-01-01-old1")
+        rc, out = self.repo.check("change")
+        self.assertIn(f"PASS  change           tier 1 ({ARCH}/2026-10-01-add-thing)", out, out)
+        self.assertIn("2026-01-01-old1", out.split(NOT_COUNTED)[1], out)
+
+    def test_pr_tier1_with_only_exempt_edits_fails(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        rc, out = run_gates(self.repo, "change", body="Tier: 1\n")
+        self.assertIn("FAIL  change", out, out)
+        self.assertIn("tier 1 needs an OpenSpec change", out, out)
+        self.assertIn(NOT_COUNTED, out, out)
+
+    def test_no_base_no_exemption(self):
+        self.make("2026-01-01-old1")
+        self.tick("2026-01-01-old1")
+        self.repo.commit("tick")
+        sh(self.repo.path, "git", "branch", "-D", "main")
+        self.assertCounted("2026-01-01-old1")
+
+
 if __name__ == "__main__":
     unittest.main()
