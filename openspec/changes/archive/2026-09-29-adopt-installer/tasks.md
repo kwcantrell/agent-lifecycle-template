@@ -22,4 +22,5 @@
 
 ## 3. Archive
 
-- [ ] 3.1 After archive, replace the placeholder Purpose of `openspec/specs/installer/spec.md`; `openspec validate --all --strict` passes
+- [x] 3.1 After archive, replace the placeholder Purpose of `openspec/specs/installer/spec.md`; `openspec validate --all --strict` passes
+  Evidence: `openspec validate --all --strict` -> `Totals: 3 passed, 0 failed`
