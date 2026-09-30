@@ -54,7 +54,7 @@ These live in the forge, not the repo, so the template can't apply them:
   `Grandfathered: <id>` line in the PR, and the rule that the change must already be on main.
   A tasks.md-only edit to such an archive is exempt like any other (next point) and needs no
   `Grandfathered:` line.
-- A tasks.md-only edit to an archive already on main is not a change (ADR 0016). A tier 0 PR can
+- A tasks.md-only edit to an archive already on the base branch is not a change (ADR 0016). A tier 0 PR can
   therefore tick archived tasks that weren't done, or drop their `Evidence:` lines. The controls
   are the `change` message, which names every such archive, CODEOWNERS on `openspec/changes/`
   (a repo that keeps its own CODEOWNERS must add it), and human review.

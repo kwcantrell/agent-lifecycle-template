@@ -23,3 +23,11 @@ Findings were de-duplicated across reviewers, and each id shows who raised it. T
 - [x] [minor] A-3 (A): nothing parses the `change` message, so changing it is safe. Informational; recorded in the design's assumptions.
 - [x] [minor] A-4 (A): the assumptions table lacked rows for `on_base` on directories and for rename behaviour. Resolved: rows added.
 - [x] [minor] S-8 (S): size, structure and tier are fine, and nothing conflicts with "Tier 0 carries no change" or grandfathering. Informational.
+
+## Consistency read 2026-09-29
+Reader: a separate Sonnet subagent, read-only, before archive. Documents read: proposal.md, design.md, tasks.md, specs/gate-checker/spec.md, panel.md, the code/tests/docs diff bc05863..036202e, ADR 0016.
+Edits since approval: tasks.md (1.1-2.4 ticked with `Evidence:` lines). Scope change: no.
+- [x] [minor] No test exercised the note on a WARN result, though the spec requires it on PASS, WARN and FAIL. Resolved: added `test_note_on_warn` (grandfathered change plus an exempt archive edit); it errors when the note is dropped on WARN.
+- [x] [minor] "Path with a space" test did not assert the second fragment was absent. Resolved: also asserts `'b.sh'` is absent.
+- [x] [minor] design.md Context line anchors predate the implementation. Accepted: orientation only; code located by content.
+- [x] [minor] docs/security.md said "already on main" where the rule uses the merge-base. Resolved: now "already on the base branch".

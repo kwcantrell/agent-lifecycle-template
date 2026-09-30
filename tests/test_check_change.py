@@ -584,6 +584,7 @@ class ChangedPathsTest(unittest.TestCase):
                 rc, out = self.repo.check("risk-floor")
                 self.assertIn("'scripts/a b.sh'", out, out)
                 self.assertNotIn("'scripts/a'", out, out)
+                self.assertNotIn("'b.sh'", out, out)
                 self.repo.close()
         self.repo = Repo()
 
@@ -691,6 +692,16 @@ class ArchiveTaskEditTest(unittest.TestCase):
         self.assertIn("PASS  change", out, out)
         self.assertIn(NOT_COUNTED, out, out)
         self.assertEqual(rc, 0, out)
+
+    def test_note_on_warn(self):
+        base = {**LEGACY, **legacy_archive("2026-01-01-old1")}
+        self.repo = Repo(lifecycle={"grandfathered_changes": ["legacy"]}, base_files=base)
+        self.repo.write("openspec/changes/legacy/tasks.md", "- [ ] 1.1 still open\n")
+        self.tick("2026-01-01-old1")
+        rc, out = self.repo.check("change")
+        self.assertIn("WARN  change", out, out)
+        self.assertIn("grandfathered", out, out)
+        self.assertIn("2026-01-01-old1", out.split(NOT_COUNTED)[1], out)
 
     # Counted, as before
 
