@@ -78,6 +78,7 @@ class Context:
     in_ci: bool = False
     change_dir: Path | None = None
     tier: int | None = None
+    grandfathered: bool = False
     overrides: set[str] = field(default_factory=set)
 
 
@@ -100,6 +101,28 @@ def with_base_exemptions(cfg: dict, base: str | None) -> dict:
     if not isinstance(base_lc, dict):  # no lifecycle on the base yet (e.g. the install PR)
         return cfg
     return {**cfg, **{k: base_lc.get(k) for k in EXEMPTION_KEYS}}
+
+
+def base_grandfathered(base: str | None) -> list[str]:
+    """Change ids grandfathered on the merge-base. Never the PR's own list; malformed means none."""
+    if not base:
+        return []
+    r = subprocess.run(["git", "show", f"{base}:openspec/config.yaml"], cwd=ROOT,
+                       capture_output=True, text=True)
+    lc = (yaml.safe_load(r.stdout) or {}).get("lifecycle") if r.returncode == 0 else None
+    value = lc.get("grandfathered_changes") if isinstance(lc, dict) else None
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def on_base(base: str | None, path: str) -> bool:
+    return bool(base) and subprocess.run(["git", "cat-file", "-e", f"{base}:{path}"], cwd=ROOT,
+                                         capture_output=True).returncode == 0
+
+
+def change_id(change_dir: str) -> str:
+    """openspec/changes/<id> -> <id>; openspec/changes/archive/YYYY-MM-DD-<id> -> <id>."""
+    name = change_dir.rstrip("/").split("/")[-1]
+    return re.sub(r"^\d{4}-\d{2}-\d{2}-", "", name) if change_dir.startswith(ARCHIVE + "/") else name
 
 
 def resolve_base(explicit: str | None) -> str | None:
@@ -165,11 +188,24 @@ def check_change(ctx: Context):
     if len(dirs) > 1:
         return "FAIL", f"one change per branch; found {sorted(dirs)}"
     if dirs:
-        ctx.change_dir = ROOT / dirs.pop()
+        rel = dirs.pop()
+        ctx.change_dir = ROOT / rel
+        cid = change_id(rel)
+        # Grandfathering comes before the Tier line: changes that predate the lifecycle have none.
+        if cid in base_grandfathered(ctx.base) and on_base(ctx.base, f"{CHANGES}/{cid}"):
+            ctx.grandfathered = True
+            if os.environ.get("GITHUB_EVENT_PATH") and not re.search(
+                    rf"^\s*Grandfathered:\s*{re.escape(cid)}\s*$", ctx.pr_body, re.M):
+                return "FAIL", f"grandfathered change; declare `Grandfathered: {cid}` in the PR body"
+            return "WARN", f"grandfathered: {cid} predates the lifecycle ({rel})"
         proposal = ctx.change_dir / "proposal.md"
         m = re.search(r"^Tier:\s*([012])\b", proposal.read_text(), re.M) if proposal.exists() else None
         if not m:
-            return "FAIL", f"{proposal.relative_to(ROOT)} must declare `Tier: 0|1|2`"
+            hint = ""
+            if cid in ((ctx.cfg.get("grandfathered_changes") or []) if isinstance(ctx.cfg.get("grandfathered_changes"), list) else []):
+                hint = (" (listed, but not grandfathered: the merge-base lacks it in its config"
+                        " or lacks the change dir; merge main)")
+            return "FAIL", f"{proposal.relative_to(ROOT)} must declare `Tier: 0|1|2`{hint}"
         ctx.tier = int(m.group(1))
     body_tier = re.search(r"^\s*Tier:\s*([012])\b", ctx.pr_body, re.M)
     if body_tier:
@@ -178,6 +214,8 @@ def check_change(ctx: Context):
         ctx.tier = int(body_tier.group(1))
     if ctx.tier is None:
         ctx.tier = 0
+    if ctx.tier == 0 and ctx.change_dir is not None:
+        return "FAIL", "tier 0 needs no OpenSpec change; use tier 1 or drop the change dir"
     if ctx.tier >= 1 and ctx.change_dir is None:
         return "FAIL", f"tier {ctx.tier} needs an OpenSpec change under {CHANGES}/"
     where = ctx.change_dir.relative_to(ROOT) if ctx.change_dir else "no change dir"
@@ -186,6 +224,9 @@ def check_change(ctx: Context):
 
 def check_risk_floor(ctx: Context):
     risky = [f for f in ctx.changed if matches(f, ctx.cfg.get("high_risk_paths", []))]
+    if ctx.grandfathered:
+        return ("WARN", f"grandfathered; high-risk paths touched: {risky[:10]}") if risky \
+            else ("PASS", "grandfathered; no high-risk paths touched")
     if risky and (ctx.tier or 0) < 2:
         return "FAIL", f"touches high-risk paths, so tier must be 2: {risky[:5]}"
     return "PASS", f"{len(risky)} high-risk path(s) touched"
@@ -418,6 +459,8 @@ CHECKS = {
 
 # Checks that read the tier or change directory `change` resolves.
 NEEDS_CHANGE = {"risk-floor", "approval", "panel", "tasks", "evidence", "artifacts-first"}
+# Skipped for a grandfathered change; risk-floor still runs and warns.
+GRANDFATHER_SKIPS = {"approval", "panel", "tasks", "evidence", "artifacts-first", "size"}
 
 
 def main() -> int:
@@ -456,6 +499,8 @@ def main() -> int:
     for name in names:
         if name == "change":
             status, msg = change_result
+        elif ctx.grandfathered and name in GRANDFATHER_SKIPS:
+            status, msg = "SKIP", "grandfathered"
         elif change_failed and name in NEEDS_CHANGE:
             status, msg = "SKIP", "blocked: change failed"
         else:
