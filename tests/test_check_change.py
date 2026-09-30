@@ -317,6 +317,57 @@ LEGACY = {"openspec/changes/legacy/proposal.md": "# Legacy\n\n## Why\n\nPredates
 GF_CHECKS = "change,risk-floor,approval,panel,tasks,evidence,artifacts-first,size"
 
 
+class AdrNumberTest(unittest.TestCase):
+    """ADR numbers in docs/decisions/ are unique; untouched old duplicates only warn locally."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def gates(self, *args: str) -> tuple[int, str]:
+        env = {"CI": "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        r = sh(self.repo.path, "scripts/check-change.sh", *(args or ("--only", "adr")), env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_duplicate_added_fails_every_stage(self):
+        self.repo = Repo(base_files={"docs/decisions/0016-a.md": "# a\n"})
+        self.repo.write("docs/decisions/0016-b.md", "# b\n")
+        for args in (("--only", "adr"), ("--stage", "commit", "--quiet"), ("--stage", "hook", "--quiet"),
+                     ("--stage", "pr")):
+            with self.subTest(args=args):
+                rc, out = self.gates(*args)
+                self.assertIn("FAIL  adr", out)
+                self.assertIn("0016-a.md", out)
+                self.assertIn("0016-b.md", out)
+
+    def test_preexisting_duplicate_warns_in_hook_fails_in_pr(self):
+        self.repo = Repo(base_files={"docs/decisions/0005-a.md": "# a\n", "docs/decisions/0005-b.md": "# b\n"})
+        self.repo.write("src/app.py", "x = 2\n")
+        rc, out = self.gates("--stage", "hook", "--quiet")
+        self.assertIn("WARN  adr", out)
+        self.assertNotIn("FAIL  adr", out)
+        rc, out = self.gates("--stage", "pr")
+        self.assertIn("FAIL  adr", out)
+
+    def test_renames_pass(self):
+        self.repo = Repo(base_files={"docs/decisions/0016-a.md": "# a\n"})
+        sh(self.repo.path, "git", "mv", "docs/decisions/0016-a.md", "docs/decisions/0016-b.md")
+        self.repo.write("docs/decisions/0017-new.md", "# new\n")
+        sh(self.repo.path, "git", "mv", "-f", "docs/decisions/0017-new.md", "docs/decisions/0018-new.md")
+        rc, out = self.gates()
+        self.assertIn("PASS  adr", out)
+
+    def test_other_naming_ignored(self):
+        self.repo = Repo()
+        for name in ("adr-001.md", "README.md", "0007-x.MD", "sub/0007-y.md"):
+            self.repo.write(f"docs/decisions/{name}", "x\n")
+        rc, out = self.gates()
+        self.assertIn("PASS  adr", out)
+        self.repo.write("docs/decisions/0007-z.md", "x\n")
+        rc, out = self.gates()
+        self.assertIn("FAIL  adr", out)
+        self.assertIn("0007-x.MD", out)
+
+
 class YamlParseTest(unittest.TestCase):
     """Every YAML file must parse; the pre-commit config must also have a loadable shape."""
 

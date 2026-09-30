@@ -32,10 +32,10 @@ CHANGES = "openspec/changes"
 ARCHIVE = "openspec/changes/archive"
 
 STAGES = {
-    "commit": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
-    "hook": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+    "commit": ["openspec", "yaml", "adr", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
+    "hook": ["openspec", "yaml", "adr", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
              "evidence", "size", "commands"],
-    "pr": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+    "pr": ["openspec", "yaml", "adr", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
            "approval", "panel", "tasks", "evidence", "artifacts-first", "tests-with-code",
            "size", "commands", "audit"],
 }
@@ -531,6 +531,31 @@ def check_yaml(ctx: Context):
     return "PASS", f"{checked} YAML file(s) parse" + (f"; {skipped} symlink/non-file skipped" if skipped else "")
 
 
+ADR_NAME = re.compile(r"^(\d{4})-.+\.md$", re.I)
+
+
+def check_adr(ctx: Context):
+    """ADR numbers in docs/decisions/ are unique in the resulting tree (ADR 0018)."""
+    paths = git("ls-files", "-z", "--", "docs/decisions").split("\0")
+    if not ctx.in_ci:
+        paths += git("ls-files", "-z", "--others", "--exclude-standard", "--", "docs/decisions").split("\0")
+    by_number: dict[str, list[str]] = {}
+    for rel in sorted(set(filter(None, paths))):
+        parts = rel.split("/")
+        m = ADR_NAME.match(parts[-1]) if len(parts) == 3 else None
+        if m and (ROOT / rel).exists():
+            by_number.setdefault(m.group(1), []).append(rel)
+    dupes = {n: files for n, files in by_number.items() if len(files) > 1}
+    if not dupes:
+        return "PASS", f"{len(by_number)} ADR number(s) unique"
+    strict = ctx.stage not in ("commit", "hook")
+    fail = {n: f for n, f in dupes.items() if strict or any(x in ctx.changed for x in f)}
+    describe = lambda d: "; ".join(f"{n}: {', '.join(Path(x).name for x in f)}" for n, f in sorted(d.items()))
+    if fail:
+        return "FAIL", f"duplicate ADR numbers, renumber the new one: {describe(fail)}"
+    return "WARN", f"pre-existing duplicate ADR numbers, fix in their own change: {describe(dupes)}"
+
+
 def check_workflows(ctx: Context):
     wf_dir = ROOT / ".github/workflows"
     problems = []
@@ -614,6 +639,7 @@ CHECKS = {
     "size": check_size,
     "workflows": check_workflows,
     "yaml": check_yaml,
+    "adr": check_adr,
     "skills-sync": check_skills_sync,
     "guide-size": check_guide_size,
     "openspec": check_openspec,
@@ -673,7 +699,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml")):
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml", "adr")):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 
