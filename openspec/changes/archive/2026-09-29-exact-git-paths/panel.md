@@ -28,3 +28,9 @@ Delta: rename-aware size counting (owner decision after the first panel). Review
 - [x] [minor] RF-SIMILARITY-DISCOUNT (RF): a delete plus add that is at least 50% similar costs its delta (360 against 800 in the example), the same as an in-place edit. Accepted as a residual by the author, for the approver to confirm (design "Accepted residuals"). It follows from the owner's choice of rename-aware counting.
 - [x] [minor] RA-3 / RF-LOCAL-CI-ASYMMETRY (RA, RF): an unstaged `mv` counts twice locally until `git add`, while CI sees committed renames. Resolved: recorded as a residual. The hook stage only warns, and tests commit their moves.
 - [x] [minor] RF-TWO-PR-LAUNDER-UNTESTED (RF): moving from `tests/` back to `src/` in a later PR costs the whole file, which closes the two-PR laundering path. Resolved: pinned by `test_move_from_excluded_into_source_counts_whole_file`. Within one PR, a round trip nets to a counted-to-counted move.
+
+## Consistency read 2026-09-29
+Reader: a separate Sonnet subagent, read-only, before archive. Documents read: proposal.md, design.md, specs/gate-checker/spec.md, tasks.md, panel.md, `committed_lines`, `check_artifacts_first`, `check_size`, `GatePathsTest`, ADRs 0016 and 0017, docs/lifecycle.md.
+Edits since approval: tasks.md (1.1-2.4 ticked with `Evidence:` lines). Scope change: no.
+- [x] [minor] Task 2.3's check still expected the note's file, which its own evidence showed to be wrong. Resolved: reworded to expect no live file after archive; verified after archive (task 3.1).
+- [x] [minor] A-3 above and design.md's assumptions table repeat the wrong expectation. Accepted: panel-log and design history only; no normative text depends on it.

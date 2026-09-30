@@ -27,8 +27,8 @@
   Evidence: `... GatePathsTest` -> `Ran 11 tests ... OK`. Mutations each fail the class: drop `-M` (1), no rename credit (3), credit any rename (3), no binary guard (1), rename detection on in the plain pass (6)
 - [x] 2.3 Rename the YAML ADR to 0017, with its heading and note (design 3). Extend ADR 0016's
   `Rule:` line and `docs/lifecycle.md`'s size row (design 4). These are docs, so no test. Check:
-  `git grep -ln "0016-config-files" -- . ':!openspec/changes/archive'` prints only
-  `docs/decisions/0017-config-files-must-parse.md`, the note.
+  after archive, `git grep -ln "0016-config-files" -- . ':!openspec/changes/archive'` prints
+  nothing (no live file cites the old path).
   Evidence: `git mv` to `0017-config-files-must-parse.md`, heading `# 0017`, `Note:` line; ADR 0016 `Rule:` extended; lifecycle size row updated. The check as written was wrong: `git grep -ln "0016-config-files" -- . ':!openspec/changes/archive'` prints only this change's own artifacts (no live doc), which leave the live tree at archive
 - [x] 2.4 Run `python3 -m unittest discover -s tests` and `scripts/check-change.sh --stage hook`,
   and record both as `Evidence:`.
@@ -36,5 +36,6 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Archive with the delta synced into `openspec/specs/gate-checker/spec.md`, and run
+- [x] 3.1 Archive with the delta synced into `openspec/specs/gate-checker/spec.md`, and run
   `openspec validate --all --strict`.
+  Evidence: `openspec archive exact-git-paths -y` -> `~ 1` requirement synced, archived as `2026-09-29-exact-git-paths`; `openspec validate --all --strict` -> `3 passed, 0 failed`; `git grep -ln "0016-config-files" -- . ':!openspec/changes/archive'` -> no output
