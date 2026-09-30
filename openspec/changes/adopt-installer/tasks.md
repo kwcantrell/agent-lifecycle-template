@@ -17,7 +17,8 @@
   Evidence: `ls docs/decisions/0015-adopt-by-proposal.md`; docs/lifecycle.md `### Adopting into a repo with its own lifecycle`; 2 docs/security.md gaps; README install text
 - [x] 2.5 Real check on a scratch clone of infisical at `e5886f4`: its existing files are byte-identical (`sha1sum -c`), `.agents/skills/adversarial-panel` is intact, the proposals and risks are printed, `git status` shows no `.lifecycle-adoption/`, and undo leaves `git status --porcelain --ignored` as before. /home/spark/infisical unchanged
   Evidence: scratch clone at `e5886f4`: `sha1sum -c` of all original files -> all-identical; folder has settings.json (hooks PreToolUse+Stop, enabledPlugins kept, sandbox enabled), config snippet, both blocks, README; `git status` lists 0 folder entries; Next steps 1 = hooks not active; `adopt.py undo` -> `removed 50 path(s)`, `status --porcelain --ignored` identical, files identical. /home/spark/infisical: 0 status lines, still `b72d0aa`
-- [ ] 2.6 Run the full suite, `scripts/check-change.sh --stage hook`, and `--only size` (under 400); record them as `Evidence:`
+- [x] 2.6 Run the full suite, `scripts/check-change.sh --stage hook`, and `--only size` (under 400); record them as `Evidence:`
+  Evidence: `python3 -m unittest discover -s tests` -> OK (84); `scripts/check-change.sh --stage hook --quiet` -> rc=0; `--only size` -> `FAIL 577 changed lines > budget 400` (adopt.py 419 new, init.sh 135 lines moved out, README 7). The estimate of ~310 was wrong. Human chose `size-override` on 2026-09-29: the moved lines aren't new behaviour, and a split would ship an installer that still runs the target's sync-skills.sh.
 
 ## 3. Archive
 
