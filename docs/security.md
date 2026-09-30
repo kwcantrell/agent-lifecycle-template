@@ -33,6 +33,10 @@ These live in the forge, not the repo, so the template can't apply them:
    ([docs](https://docs.github.com/en/copilot/concepts/agents/coding-agent/risks-and-mitigations)).
 6. Sandbox network: add your package registries to the Claude Code sandbox network allow list
    ([docs](https://code.claude.com/docs/en/sandboxing)).
+7. Optional: in the main ruleset, require branches to be up to date before merging
+   (`strict_required_status_checks_policy`). CI then always runs on the result of the merge. It
+   doesn't bind admins using the bypass, so the `adr` and other checks on GitHub's merge commit
+   remain the real control. It costs a re-sync of each open PR after every merge.
 
 ## Known gaps
 
