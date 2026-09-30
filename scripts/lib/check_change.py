@@ -358,7 +358,7 @@ def check_artifacts_first(ctx: Context):
     commits = git("rev-list", "--topo-order", "--reverse", "--no-merges", f"{ctx.base}..HEAD").split()
     if not commits:
         return "SKIP", "no commits on branch"
-    first = git("diff-tree", "--no-commit-id", "--name-only", "-r", commits[0]).split()
+    first = [f for f in git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commits[0]).split("\0") if f]
     stray = [f for f in first if not f.startswith(CHANGES + "/")]
     if stray:
         return "FAIL", f"first commit must hold only the approved artifacts; also has {stray[:3]}"
@@ -407,6 +407,32 @@ def untracked_lines(path: Path, cap: int) -> int:
         return 0
 
 
+def committed_lines(base: str, exclude: list[str]) -> int:
+    """Changed lines against base, every count git's own. A move between two counted paths costs
+    its edits; any other move keeps its delete + add counts, so it's priced by where it lands."""
+    def cost(added: str, deleted: str) -> int:
+        return 0 if added == "-" else int(added) + int(deleted)  # binary counts 0
+
+    plain: dict[str, int] = {}
+    for rec in git("diff", "--numstat", "-z", "--no-renames", base).split("\0"):
+        if rec:
+            added, deleted, path = rec.split("\t", 2)
+            plain[path] = cost(added, deleted)
+    total = sum(n for path, n in plain.items() if not matches(path, exclude))
+    fields = git("diff", "--numstat", "-z", "-M", base).split("\0")  # -M: whatever diff.renames says
+    i = 0
+    while i < len(fields) and fields[i]:
+        added, deleted, path = fields[i].split("\t", 2)
+        if path:  # plain record
+            i += 1
+            continue
+        old, new = fields[i + 1], fields[i + 2]  # rename record: empty path, then old and new
+        i += 3
+        if not matches(old, exclude) and not matches(new, exclude):
+            total += cost(added, deleted) - plain.get(old, 0) - plain.get(new, 0)
+    return total
+
+
 def check_size(ctx: Context):
     if not ctx.base:
         return "SKIP", "no base to diff against"
@@ -415,12 +441,7 @@ def check_size(ctx: Context):
         return "SKIP", "no size_budget"
     exclude = ((ctx.cfg.get("size_exclude") or []) + (ctx.cfg.get("test_globs") or [])
                + (ctx.cfg.get("managed_paths") or []) + ["openspec/**"])
-    total = 0
-    for line in git("diff", "--numstat", ctx.base).splitlines():
-        added, deleted, path = line.split("\t", 2)
-        if added == "-" or matches(path, exclude):
-            continue
-        total += int(added) + int(deleted)
+    total = committed_lines(ctx.base, exclude)
     if not ctx.in_ci:  # CI counts committed diffs only; locally, new files count before commit
         for path in git("ls-files", "-z", "--others", "--exclude-standard").split("\0"):
             if path and not matches(path, exclude):

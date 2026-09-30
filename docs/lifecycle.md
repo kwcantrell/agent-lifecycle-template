@@ -58,7 +58,7 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | tasks | | | x | An unticked task remains |
 | artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
 | tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
-| size | | warn | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude`. Locally, untracked files count too, and the hook stage only warns. The label `size-override` overrides; skipped for a grandfathered change |
+| size | | warn | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude`. A moved file counts by where it lands: its edits within counted source, the whole file when it crosses into or out of an exclusion. Locally, untracked files count too, and the hook stage only warns. The label `size-override` overrides; skipped for a grandfathered change |
 | audit | | | x | `lifecycle.commands.audit` fails |
 
 `managed_paths`, `test_globs`, `size_exclude` and `size_budget` are read from the base branch's

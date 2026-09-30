@@ -1,8 +1,10 @@
-# 0016: YAML files must parse
+# 0017: YAML files must parse
 
 - Date: 2026-09-29
 - Status: Accepted
 - Rule: check `yaml`
+- Note: merged as 0016 in PR #9, alongside `0016-archived-task-edits` from PR #8, and renumbered
+  because #8 merged first. yaml-parse-gate's archived records use the old number and path.
 
 ## Context
 
