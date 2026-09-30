@@ -434,6 +434,47 @@ class YamlParseTest(unittest.TestCase):
         rc, out = self.gates()
         self.assertIn("PASS  yaml", out)
 
+    def test_introduced_duplicate_fails_with_key_and_line(self):
+        self.repo = Repo(base_files={"wf.yml": "permissions: read\nname: ci\n"})
+        self.repo.write("wf.yml", "permissions: read\nname: ci\npermissions: write\n")
+        for args in (("--only", "yaml"), ("--stage", "hook", "--quiet")):
+            with self.subTest(args=args):
+                rc, out = self.gates(*args)
+                self.assertIn("FAIL  yaml", out)
+                self.assertIn("wf.yml:3", out)
+                self.assertIn("duplicate key 'permissions'", out)
+
+    def test_duplicate_equality_and_tags(self):
+        self.repo = Repo()
+        self.repo.write("gha.yml", "on: push\njobs: {}\non: pull_request\n")
+        self.repo.write("num.yaml", "ports:\n  1: a\n  1.0: b\n")
+        self.repo.write("cfn.yaml", "x: !Sub\n  a: 1\n  a: 2\n")
+        rc, out = self.gates()
+        self.assertIn("FAIL  yaml", out)
+        for needle in ("gha.yml:3", "duplicate key 'on'", "num.yaml:3", "cfn.yaml:3"):
+            self.assertIn(needle, out)
+        self.repo.close()
+        self.repo = Repo()
+        self.repo.write("ok.yaml", "1: a\n'1': b\n")
+        rc, out = self.gates()
+        self.assertIn("PASS  yaml", out)
+
+    def test_merge_keys_exempt(self):
+        self.repo = Repo()
+        self.repo.write("m.yaml", "a: &a {p: 1}\nb: &b {q: 2}\nd:\n  <<: [*a, *b]\n  p: 9\ne:\n  <<: *a\n  <<: *b\n")
+        rc, out = self.gates()
+        self.assertIn("PASS  yaml", out)
+
+    def test_inherited_duplicate_only_warns(self):
+        self.repo = Repo(base_files={"old.yml": "a: 1\nb: 2\na: 3\n"})
+        self.repo.write("old.yml", "a: 1\nb: 5\na: 3\n")  # edits another line; the duplicate predates it
+        for args in (("--stage", "hook", "--quiet"), ("--stage", "pr")):
+            with self.subTest(args=args):
+                rc, out = self.gates(*args)
+                self.assertIn("WARN  yaml", out)
+                self.assertNotIn("FAIL  yaml", out)
+                self.assertIn("old.yml", out)
+
     def test_untracked_checked_locally_not_in_ci(self):
         self.repo = Repo()
         self.repo.write("new.yaml", "a: [\n")

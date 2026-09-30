@@ -45,7 +45,7 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | Check | commit | hook | pr | Fails when |
 | --- | --- | --- | --- | --- |
 | openspec | x | x | x | `openspec validate --strict` or `--archived` fails |
-| yaml | x | x | x | A YAML file doesn't parse, or `.pre-commit-config.yaml` lacks a loadable shape. At the commit and hook stages, broken files the change didn't touch only warn |
+| yaml | x | x | x | A YAML file doesn't parse, `.pre-commit-config.yaml` lacks a loadable shape, or the change introduces a duplicate key. At the commit and hook stages, broken files the change didn't touch only warn; duplicate keys already on the base only warn at every stage |
 | adr | x | x | x | Two ADRs in `docs/decisions/` share a `NNNN-` number. At the commit and hook stages, duplicates the change didn't touch only warn |
 | workflows | x | x | x | An action isn't SHA-pinned, or a workflow lacks top-level `permissions:` |
 | skills-sync | x | x | x | `.agents/skills` differs from `.claude/skills` |

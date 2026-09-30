@@ -21,6 +21,12 @@ Every tracked `.yml`/`.yaml` file must parse. Untracked ones are checked too, lo
 The commit and hook stages fail on files the change touched, and warn on untouched ones, so a repo
 with pre-existing broken YAML doesn't deadlock the Stop hook.
 
+Amended 2026-09-29 (yaml-duplicate-keys): a mapping must not state the same key twice. Keys are
+equal as Python compares their loaded values, merge keys (`<<`) are exempt, and tagged mappings
+count. A duplicate the change introduces, compared with the same file on the merge-base, fails at
+every stage. One already there only warns, so adopted repos and one-line edits aren't blocked by old
+duplicates.
+
 ## Evidence
 
 - The initial commit's `.pre-commit-config.yaml` -> `:26: mapping values are not allowed here`
@@ -31,5 +37,5 @@ with pre-existing broken YAML doesn't deadlock the Stop hook.
 
 Templated YAML (Helm `{{ }}`) doesn't parse, so repos with Helm templates will fail the PR stage.
 There is no exclusion list yet, on purpose, because an unbounded exclusion is a bypass. Add a
-bounded one when the first real repo needs it. Duplicate keys still pass (PyYAML keeps the last);
-catching them is a possible follow-up.
+bounded one when the first real repo needs it. Duplicate keys are caught since the 2026-09-29 amendment. An alias used as a duplicate key is
+reported at its anchor's line.
