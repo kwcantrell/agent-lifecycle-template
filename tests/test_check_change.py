@@ -936,5 +936,112 @@ class ArchiveTaskEditTest(unittest.TestCase):
         self.assertCounted("2026-01-01-old1")
 
 
+def lines(n: int, tag: str = "x") -> str:
+    return "".join(f"{tag}{i} = {i}\n" for i in range(n))
+
+
+class GatePathsTest(unittest.TestCase):
+    """artifacts-first and size read git paths exactly; size counts a move by where it lands."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def size(self) -> str:
+        rc, out = self.repo.check("size")
+        return out
+
+    # artifacts-first
+
+    def test_plan_commit_with_space_and_non_ascii_passes(self):
+        self.repo = Repo()
+        self.repo.change(2, panel="No findings.\n")
+        self.repo.write("openspec/changes/add-thing/a b.md", "notes\n")
+        self.repo.write("openspec/changes/add-thing/é.md", "notes\n")
+        self.repo.commit("artifacts")
+        self.repo.write("src/app.py", "x = 2\n")
+        self.repo.commit("code")
+        rc, out = self.repo.check("artifacts-first")
+        self.assertIn("PASS  artifacts-first", out, out)
+
+    def test_stray_file_with_space_is_named(self):
+        self.repo = Repo(base_files=legacy_archive("2026-01-01-old1"))
+        self.repo.change(2, panel="No findings.\n")
+        self.repo.write(f"{ARCH}/2026-01-01-old1/tasks.md", TICKED)  # exempt archive edit, allowed
+        self.repo.write("src/a b.py", "x = 1\n")
+        self.repo.commit("artifacts plus a stray file")
+        rc, out = self.repo.check("artifacts-first")
+        self.assertIn("FAIL  artifacts-first", out, out)
+        self.assertIn("'src/a b.py'", out, out)
+
+    # size
+
+    def test_non_ascii_path_matches_size_exclusion(self):
+        self.repo = Repo(lifecycle={"size_budget": 10})
+        self.repo.write("docs/é.md", lines(50))
+        self.repo.commit("doc")
+        self.assertIn("PASS  size             0/10", self.size())
+
+    def test_move_from_excluded_into_source_counts_whole_file(self):
+        self.repo = Repo(lifecycle={"size_budget": 10}, base_files={"tests/big.py": lines(50)})
+        sh(self.repo.path, "git", "mv", "tests/big.py", "src/big.py")
+        self.repo.write("src/big.py", lines(50) + "y = 2\n")
+        self.repo.commit("move into source")
+        out = self.size()
+        self.assertIn("FAIL  size             51 changed lines", out, out)
+
+    def test_move_from_source_into_excluded_counts_old_file(self):
+        self.repo = Repo(lifecycle={"size_budget": 10}, base_files={"lib/a.py": lines(50)})
+        (self.repo.path / "tests").mkdir()
+        sh(self.repo.path, "git", "mv", "lib/a.py", "tests/a.py")
+        self.repo.commit("move out of source")
+        out = self.size()
+        self.assertIn("FAIL  size             50 changed lines", out, out)
+
+    def test_move_with_edits_counts_delta(self):
+        self.repo = Repo(lifecycle={"size_budget": 10}, base_files={"lib/a.py": lines(20)})
+        sh(self.repo.path, "git", "mv", "lib/a.py", "lib/b.py")
+        self.repo.write("lib/b.py", lines(20) + lines(3, "y"))
+        self.repo.commit("move and edit")
+        self.assertIn("PASS  size             3/10", self.size())
+
+    def test_rename_detection_ignores_config(self):
+        self.repo = Repo(lifecycle={"size_budget": 10}, base_files={"lib/a.py": lines(8)})
+        sh(self.repo.path, "git", "config", "diff.renames", "false")
+        sh(self.repo.path, "git", "mv", "lib/a.py", "lib/b.py")
+        self.repo.commit("pure move")
+        self.assertIn("PASS  size             0/10", self.size())
+
+    def test_text_attr_move_into_excluded_never_negative(self):
+        data = "".join(f"row{i}\0\n" for i in range(30))
+        self.repo = Repo(lifecycle={"size_budget": 100},
+                         base_files={".gitattributes": "*.dat diff\n", "lib/n.dat": data})
+        (self.repo.path / "tests").mkdir()
+        sh(self.repo.path, "git", "mv", "lib/n.dat", "tests/n.dat")
+        self.repo.write("lib/x.py", lines(3))
+        self.repo.commit("move a text-diffed file out, add code")
+        self.assertIn("PASS  size             33/100", self.size())
+
+    def test_pure_move_in_source_costs_nothing(self):
+        self.repo = Repo(lifecycle={"size_budget": 10}, base_files={"lib/a.py": lines(8)})
+        sh(self.repo.path, "git", "mv", "lib/a.py", "lib/b.py")
+        self.repo.commit("pure move")
+        self.assertIn("PASS  size             0/10", self.size())
+
+    def test_binary_move_then_edit_counts_edit(self):
+        self.repo = Repo(lifecycle={"size_budget": 10})
+        (self.repo.path / "lib").mkdir()
+        (self.repo.path / "lib/b.bin").write_bytes(bytes(range(256)) * 40)
+        self.repo.commit("binary")
+        sh(self.repo.path, "git", "branch", "-f", "main", "HEAD")  # the binary is on the base
+        sh(self.repo.path, "git", "mv", "lib/b.bin", "lib/c.bin")
+        self.repo.write("lib/x.py", lines(3))
+        self.repo.commit("move binary, add code")
+        self.assertIn("PASS  size             3/10", self.size())
+
+    def test_empty_diff_counts_zero(self):
+        self.repo = Repo(lifecycle={"size_budget": 10})
+        self.assertIn("PASS  size             0/10", self.size())
+
+
 if __name__ == "__main__":
     unittest.main()

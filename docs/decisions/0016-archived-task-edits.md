@@ -2,7 +2,8 @@
 
 - Date: 2026-09-29
 - Status: Accepted
-- Rule: check `change` (`exempt_archives`); changed paths read NUL-separated with `--no-renames`
+- Rule: check `change` (`exempt_archives`); changed paths read NUL-separated with `--no-renames`;
+  artifacts-first and size read git paths the same way (exact-git-paths)
 
 ## Context
 
