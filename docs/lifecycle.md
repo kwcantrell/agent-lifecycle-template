@@ -48,7 +48,7 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | workflows | x | x | x | An action isn't SHA-pinned, or a workflow lacks top-level `permissions:` |
 | skills-sync | x | x | x | `.agents/skills` differs from `.claude/skills` |
 | guide-size | x | x | x | AGENTS.md is over its line budget |
-| change | x | x | x | More than one change on the branch, no `Tier:` line, tier 1-2 without a change, or a tier 0 change dir. A grandfathered change WARNs, and in CI fails unless the PR body says `Grandfathered: <id>` |
+| change | x | x | x | More than one change on the branch, no `Tier:` line, tier 1-2 without a change, or a tier 0 change dir. A grandfathered change WARNs, and in CI fails unless the PR body says `Grandfathered: <id>`. A tasks.md-only edit to an archive already on the base isn't counted, and is named in the message (ADR 0016) |
 | risk-floor | x | x | x | A high-risk path is touched below tier 2 (a grandfathered change WARNs with the paths) |
 | evidence | | x | x | A ticked task has no `Evidence:` |
 | commands | | x | x | lint, typecheck or test fails |
