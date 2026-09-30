@@ -12,10 +12,12 @@
 - [x] 2.2 Write the new hook to `openspec/changes/stop-hook-warnings/stop-check.sh`, and record its sha256 here and in the PR body
   Evidence: stop-check.sh sha256: aeacc63dad27525758aa431b0a32772e532caf71716ff5b5d0787ac677bf22dd
   Pre-verified in throwaway repos (the proposed hook committed into each fixture's base): StopHookWarningTest (6) plus the 3 existing HookTest tests -> `Ran 9 tests ... OK`
-- [ ] 2.3 **Human:** check the sha256, read the `git diff --no-index` against the installed hook, then `cp` it to `.claude/hooks/stop-check.sh`; 1.1 passes
+- [x] 2.3 **Human:** check the sha256, read the `git diff --no-index` against the installed hook, then `cp` it to `.claude/hooks/stop-check.sh`; 1.1 passes
+  Evidence: the human ran `git diff --no-index` (reviewed), `sha256sum` -> `aeacc63d...bf22dd` (matches), then `cp`; the installed `.claude/hooks/stop-check.sh` sha256 is the same; `test_installed_hook_matches_recorded_sha` passes
 - [x] 2.4 Update docs/lifecycle.md, ADR 0004 (warnings: the user every time, the agent once for size), and docs/security.md (marker gaming, untrusted text)
   Evidence: ADR 0004 `Amended 2026-09-29 (stop-hook-warnings)`; docs/lifecycle.md Stop hook sentence; docs/security.md marker and untrusted-text gap
-- [ ] 2.5 Run the full suite and `scripts/check-change.sh --stage hook`. In a real Claude Code session, observe one Stop with a size warning (block, then `systemMessage` on the next stop). Record as `Evidence:`
+- [x] 2.5 Run the full suite and `scripts/check-change.sh --stage hook`. In a real Claude Code session, observe one Stop with a size warning (block, then `systemMessage` on the next stop). Record as `Evidence:`
+  Evidence: `python3 -m unittest discover -s tests` -> `Ran 140 tests ... OK`. Live session, with a 450-line untracked probe (`WARN size 516 changed lines > budget 400`). First stop: blocked once; the reason began with the instruction, then "Untrusted check output follows", and the backticks were sanitized to `?`. Second stop: not blocked; the human confirmed seeing the systemMessage. Probe removed
 
 ## 3. Archive
 
