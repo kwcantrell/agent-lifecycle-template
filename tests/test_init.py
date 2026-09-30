@@ -5,8 +5,10 @@ so the tests need only python3 and PyYAML and never touch the network.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,14 +21,17 @@ LIFECYCLE_PATHS = ["/AGENTS.md", "/CLAUDE.md", "/.claude/", "/.agents/", "/.gith
 STUB_OPENSPEC = """#!/usr/bin/env bash
 # Stub: `openspec init` creates the minimal layout init.sh expects.
 if [[ "$1" == init ]]; then
-  mkdir -p openspec/specs openspec/changes/archive
-  printf 'schema: spec-driven\\n' > openspec/config.yaml
+  mkdir -p openspec/specs openspec/changes/archive .claude/skills/openspec-propose
+  [[ -e openspec/config.yaml ]] || printf 'schema: spec-driven\\n' > openspec/config.yaml
+  [[ -e .claude/skills/openspec-propose/SKILL.md ]] || echo generated > .claude/skills/openspec-propose/SKILL.md
 fi
 """
 STUB_GH = "#!/usr/bin/env bash\nexit 1\n"  # behaves like an unauthenticated gh
 
 
-class InitTest(unittest.TestCase):
+class InitFixture(unittest.TestCase):
+    """A throwaway target repo with stub `openspec` and `gh` first on PATH."""
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -61,6 +66,8 @@ class InitTest(unittest.TestCase):
     def codeowners(self) -> Path:
         return self.target / ".github/CODEOWNERS"
 
+
+class InitTest(InitFixture):
     def test_owner_renders(self):
         r = self.init("--owner", "@acme/maintainers", str(self.target))
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -133,7 +140,7 @@ class InitTest(unittest.TestCase):
 
     # Exact files init.sh installs and must list in the target's lifecycle.managed_paths.
     MANAGED = ["scripts/check-change.sh", "scripts/sync-skills.sh", "scripts/lib/check_change.py",
-               ".claude/hooks/guard-approval.sh", ".claude/hooks/stop-check.sh"]
+               "scripts/lib/adopt.py", ".claude/hooks/guard-approval.sh", ".claude/hooks/stop-check.sh"]
 
     def lifecycle(self, root: Path) -> dict:
         import yaml
@@ -155,6 +162,108 @@ class InitTest(unittest.TestCase):
         r = self.init("--owner", "@acme/x", str(self.target))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.lifecycle(self.target)["managed_paths"], ["vendor/x.sh"])
+
+
+class AdoptionTest(InitFixture):
+    """Adopting into a repo that already has its own agent guidance: create-only, plus proposals."""
+
+    def existing_setup(self) -> dict[str, bytes]:
+        files = {
+            "AGENTS.md": "# Mine\nUse a worktree.\n",
+            "CLAUDE.md": "@AGENTS.md\n",
+            ".claude/settings.json": json.dumps({"permissions": {"allow": ["Bash"]},
+                                                 "enabledPlugins": {"p": True}}),
+            "openspec/config.yaml": "schema: spec-driven\nrules:\n  proposal: [x]\n",
+            ".agents/skills/mine/SKILL.md": "mine\n",
+            ".claude/skills/openspec-propose/SKILL.md": "theirs\n",
+        }
+        for rel, text in files.items():
+            (self.target / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.target / rel).write_text(text)
+        (self.target / ".gitignore").write_text(".claude/settings.json\n")
+        self.commit()
+        return {rel: (self.target / rel).read_bytes() for rel in files}
+
+    def status(self) -> str:
+        return self.git("status", "--porcelain", "--ignored")
+
+    def adopt_py(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(TEMPLATE / "scripts/lib/adopt.py"), *args],
+                              capture_output=True, text=True)
+
+    def test_existing_and_ignored_files_untouched(self):
+        before = self.existing_setup()
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for rel, data in before.items():
+            self.assertEqual((self.target / rel).read_bytes(), data, rel)
+        folder = self.target / ".lifecycle-adoption"
+        for name in ("README.md", "settings.json", "openspec-config.snippet.yaml",
+                     "AGENTS.block.md", "CLAUDE.block.md"):
+            self.assertTrue((folder / name).is_file(), name)
+        self.assertTrue((self.target / "docs/agent-lifecycle.md").is_file())
+        self.assertTrue((self.target / ".agents/skills/risk-tier/SKILL.md").is_file())
+        self.assertIn("Bash", r.stdout.split("Risks", 1)[1])
+
+    def test_unwired_hooks_first_next_step(self):
+        self.existing_setup()
+        r = self.init("--owner", "@acme/x", str(self.target))
+        next_steps = r.stdout.split("Next steps", 1)[1]
+        first = next(line for line in next_steps.splitlines() if line.strip().startswith("1."))
+        self.assertIn("hooks", first)
+        self.assertIn("not active", first)
+
+    def test_openspec_init_skipped_when_generated_files_exist(self):
+        self.existing_setup()
+        marker = self.target / "openspec-init-ran"
+        (self.bin / "openspec").write_text(f"#!/usr/bin/env bash\ntouch {marker}\n")
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(marker.exists())
+        self.assertIn("openspec init", r.stdout)
+
+    def test_symlink_outside_repo_skipped(self):
+        outside = Path(self.tmp.name) / "target-evil"  # shares the target's path prefix
+        outside.mkdir()
+        (self.target / "docs").symlink_to(outside, target_is_directory=True)
+        self.commit()
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertIn("outside", r.stdout)
+
+    def test_existing_adoption_folder_refused(self):
+        (self.target / ".lifecycle-adoption").mkdir()
+        (self.target / ".lifecycle-adoption/.gitignore").write_text("*\n")
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.target / "AGENTS.md").exists())
+
+    def test_adoption_folder_ignored(self):
+        self.existing_setup()
+        self.init("--owner", "@acme/x", str(self.target))
+        self.assertNotIn(".lifecycle-adoption", self.git("status", "--porcelain"))
+
+    def test_undo_restores_tree(self):
+        before = self.status()
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotEqual(self.status(), before)
+        u = self.adopt_py("undo", "--target", str(self.target))
+        self.assertEqual(u.returncode, 0, u.stderr)
+        self.assertEqual(self.status(), before)
+        leftovers = [p for p in self.target.rglob("*") if ".git" not in p.parts and p.name != "app.py"]
+        self.assertEqual(leftovers, [])
+
+    def test_fresh_install_writes_config(self):
+        r = self.init("--owner", "@acme/x", "--test", "make test", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        import yaml
+        lc = yaml.safe_load((self.target / "openspec/config.yaml").read_text())["lifecycle"]
+        self.assertEqual(lc["commands"]["test"], "make test")
+        self.assertIn("scripts/lib/adopt.py", lc["managed_paths"])
+        folder = sorted(p.name for p in (self.target / ".lifecycle-adoption").iterdir())
+        self.assertEqual(folder, [".gitignore", "MANIFEST", "README.md"])
 
 
 class RepoCodeownersTest(unittest.TestCase):
