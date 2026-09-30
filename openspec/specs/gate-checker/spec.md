@@ -77,7 +77,7 @@ The default test globs SHALL match `test/`, `tests/` and `__tests__/` directorie
 - **THEN** tests-with-code passes
 
 ### Requirement: Lifecycle-managed files are not the target's source
-The tests-with-code and size gates SHALL ignore changed files matching `lifecycle.managed_paths`. The installer SHALL set that list to the exact files it installs, unless the target already has a value.
+The tests-with-code and size gates SHALL ignore changed files matching `lifecycle.managed_paths`. The installer SHALL write that list, the exact files it installs including `scripts/lib/adopt.py`, into a config it creates, and SHALL include it in the proposal when the target already has a config.
 
 #### Scenario: Managed file changed without tests
 - **WHEN** the only source change is a managed file such as `scripts/check-change.sh`
@@ -88,12 +88,12 @@ The tests-with-code and size gates SHALL ignore changed files matching `lifecycl
 - **THEN** the size gate passes
 
 #### Scenario: Installer fills managed_paths
-- **WHEN** init.sh installs into a target whose config has no `managed_paths`
-- **THEN** the target lists exactly the installed checker, scripts and hooks, and this repo keeps `managed_paths: []`
+- **WHEN** init.sh installs into a target with no config
+- **THEN** the new config lists exactly the installed checker, scripts, adopt.py and hooks, and this repo keeps `managed_paths: []`
 
 #### Scenario: Installer keeps a target's value
-- **WHEN** the target's config already sets `managed_paths`
-- **THEN** init.sh leaves it unchanged
+- **WHEN** the target already has a config
+- **THEN** init.sh leaves it unchanged, and the proposal lists the lifecycle keys it lacks
 
 ### Requirement: A PR cannot grant its own exemptions
 The gate checker SHALL read `managed_paths`, `test_globs`, `size_exclude` and `size_budget` from the base branch's `openspec/config.yaml` when the base has one.

@@ -33,7 +33,7 @@ lifecycle:
   # copies the values below, which are this template repo's own.
   commands:
     test: "python3 -m unittest discover -s tests"
-    lint: "bash -n scripts/*.sh .claude/hooks/*.sh && python3 -m py_compile scripts/lib/check_change.py"
+    lint: "bash -n scripts/*.sh .claude/hooks/*.sh && python3 -m py_compile scripts/lib/*.py"
     typecheck: ""
     audit: ""
     build: ""       # release workflow only

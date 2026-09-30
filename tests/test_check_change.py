@@ -75,7 +75,7 @@ class Repo:
 
     def check(self, *only: str, env: dict | None = None) -> tuple[int, str]:
         # Clear CI context so a real PR's event (its Tier, labels, base) can't leak into the test.
-        ci = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        ci = {"CI": "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
         r = sh(self.path, "scripts/check-change.sh", "--only", ",".join(only), env={**ci, **(env or {})})
         return r.returncode, r.stdout + r.stderr
 
@@ -329,7 +329,7 @@ class GrandfatherTest(unittest.TestCase):
         return self.repo
 
     def gates(self, only: str, body: str | None = None) -> tuple[int, str]:
-        env = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        env = {"CI": "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
         if body is not None:
             event = self.repo.path / "event.json"
             event.write_text(json.dumps({"pull_request": {"body": body, "labels": []}}))
@@ -449,7 +449,7 @@ class OnlyTest(unittest.TestCase):
         self.repo.close()
 
     def run_only(self, only: str, env: dict | None = None) -> tuple[int, list[str], str]:
-        ci = {"CI": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        ci = {"CI": "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
         r = sh(self.repo.path, "scripts/check-change.sh", "--only", only, env={**ci, **(env or {})})
         lines = [line.split()[0] + " " + line.split()[1] for line in r.stdout.splitlines() if line.strip()]
         return r.returncode, lines, r.stdout + r.stderr

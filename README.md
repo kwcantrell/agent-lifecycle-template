@@ -19,8 +19,11 @@ scripts/init.sh --dry-run /path/to/repo   # see what it would copy
 scripts/init.sh /path/to/repo             # asks for test/lint/typecheck/audit/build commands
 ```
 
-init.sh never overwrites a file; it lists what it skipped so you can merge by hand. After
-installing, do the forge setup in [docs/security.md](docs/security.md).
+init.sh only creates files. For files your repo already has (AGENTS.md, CLAUDE.md, settings,
+OpenSpec config) it writes proposals into `.lifecycle-adoption/` for you to merge; see
+[docs/lifecycle.md](docs/lifecycle.md). `python3 scripts/lib/adopt.py undo --target /path/to/repo`
+removes exactly what it created. After installing, do the forge setup in
+[docs/security.md](docs/security.md).
 
 ## Check a change
 

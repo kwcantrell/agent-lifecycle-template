@@ -69,14 +69,33 @@ CI runs `pr` on pull requests.
 ## Setup
 
 1. `scripts/init.sh --owner @you /path/to/repo`, which asks for your stack commands and source
-   globs. It renders `.github/CODEOWNERS` for that owner. It never touches an existing
-   CODEOWNERS; it prints the paths to add instead. With no owner, it skips CODEOWNERS.
+   globs. It only creates files that don't exist yet, and records each one in
+   `.lifecycle-adoption/MANIFEST` so `scripts/lib/adopt.py undo --target /path/to/repo` can
+   remove exactly those. It renders `.github/CODEOWNERS` for the owner unless one exists.
 2. Add toolchain setup to the "Stack setup" steps in both workflows.
 3. Do the forge settings in `docs/security.md` "Setup a human must do".
 4. `pre-commit install --hook-type pre-commit --hook-type pre-push`
 5. Commit the install as a tier 2 change, run through the lifecycle itself.
 
 Presets for common stacks may come later. Until then, init.sh asks for the commands.
+
+### Adopting into a repo with its own lifecycle
+
+Where the repo already has AGENTS.md, CLAUDE.md, `.claude/settings.json` or
+`openspec/config.yaml`, init.sh leaves them untouched (ADR 0015). Adoption then has two phases:
+
+1. **Install.** New files are created. Proposals go into `.lifecycle-adoption/`, a folder git
+   ignores:
+   - `settings.json`, your settings with the lifecycle deny rules, sandbox and hooks merged in;
+   - `openspec-config.snippet.yaml`, the sections your config lacks;
+   - `AGENTS.block.md` and `CLAUDE.block.md`, marked blocks that point to the rulebook at
+     `docs/agent-lifecycle.md` and say the lifecycle gates win on conflict.
+2. **Merge by hand.** Work through `.lifecycle-adoption/README.md`. It lists risky settings
+   first. The hooks are **not active** until you merge the proposed settings.json. Then reconcile
+   any of your own guidance that contradicts the lifecycle, and delete the folder.
+
+`openspec init` runs only on repos with no OpenSpec files. Otherwise run `openspec update`
+yourself.
 
 ### Grandfathering in-flight changes
 
