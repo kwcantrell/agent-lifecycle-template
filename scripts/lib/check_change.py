@@ -457,10 +457,33 @@ def check_size(ctx: Context):
 
 
 class TolerantLoader(yaml.SafeLoader):
-    """SafeLoader that reads unknown `!tags` (CloudFormation, Ansible) as plain values.
+    """SafeLoader that reads unknown `!tags` (CloudFormation, Ansible) as plain values, and records
+    duplicate mapping keys instead of silently keeping the last one.
 
     `!!python/...` tags resolve to tag:yaml.org,2002:python/*, not `!`, so they stay rejected.
     """
+
+    def __init__(self, stream):
+        super().__init__(stream)
+        self.duplicates: list[tuple[str, int]] = []  # (key as written, 1-based line)
+
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode):
+            hashed, unhashable = set(), []
+            for key_node, _ in node.value:  # explicit keys only: merge (<<) pairs are exempt
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                key = self.construct_object(key_node, deep=deep)
+                try:
+                    seen = key in hashed
+                    hashed.add(key)
+                except TypeError:  # unhashable: super() reports it as a parse problem
+                    seen = key in unhashable
+                    unhashable.append(key)
+                if seen:
+                    text = key_node.value if isinstance(key_node, yaml.ScalarNode) else repr(key)
+                    self.duplicates.append((str(text), key_node.start_mark.line + 1))
+        return super().construct_mapping(node, deep=deep)
 
 
 def _any_tag(loader: yaml.SafeLoader, suffix: str, node: yaml.Node):
@@ -475,27 +498,63 @@ TolerantLoader.add_multi_constructor("!", _any_tag)
 YAML_MAX_BYTES = 1 << 20
 
 
-def yaml_problem(path: Path, rel: str) -> str | None:
-    """None if the file parses (and, for the pre-commit config, has a loadable shape)."""
+def load_yaml(text: str) -> tuple[list, list[tuple[str, int]]]:
+    loader = TolerantLoader(text)
     try:
-        docs = list(yaml.load_all(path.read_text(encoding="utf-8"), Loader=TolerantLoader))
+        docs = []
+        while loader.check_data():
+            docs.append(loader.get_data())
+        return docs, loader.duplicates
+    finally:
+        loader.dispose()
+
+
+def yaml_problem(path: Path, rel: str) -> tuple[str | None, list[tuple[str, int]]]:
+    """(problem, duplicate keys). problem is None if the file parses and, for the pre-commit
+    config, has a loadable shape."""
+    try:
+        docs, dups = load_yaml(path.read_text(encoding="utf-8"))
     except yaml.MarkedYAMLError as e:
         mark = e.problem_mark or e.context_mark
         line = f":{mark.line + 1}" if mark else ""
-        return f"{rel}{line}: {e.problem or e.context}"
+        return f"{rel}{line}: {e.problem or e.context}", []
     except Exception as e:  # constructor errors, RecursionError, UnicodeDecodeError, ...
-        return f"{rel}: {type(e).__name__}: {str(e)[:120]}"
+        return f"{rel}: {type(e).__name__}: {str(e)[:120]}", []
     if rel == ".pre-commit-config.yaml":
         cfg = docs[0] if docs else None
         repos = cfg.get("repos") if isinstance(cfg, dict) else None
         if not isinstance(repos, list):
-            return f"{rel}: pre-commit needs a top-level `repos` list"
+            return f"{rel}: pre-commit needs a top-level `repos` list", dups
         for i, repo in enumerate(repos):
             if not (isinstance(repo, dict) and "repo" in repo and isinstance(repo.get("hooks"), list)):
-                return f"{rel}: repos[{i}] needs `repo` and a `hooks` list"
+                return f"{rel}: repos[{i}] needs `repo` and a `hooks` list", dups
             if not all(isinstance(h, dict) and "id" in h for h in repo["hooks"]):
-                return f"{rel}: every hook in repos[{i}] needs an `id`"
-    return None
+                return f"{rel}: every hook in repos[{i}] needs an `id`", dups
+    return None, dups
+
+
+def introduced_duplicates(ctx: Context, rel: str, dups: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    """Duplicates beyond those the same file already had on the merge-base (all, if it's new)."""
+    allowance: dict[str, int] = {}
+    if ctx.base:
+        r = subprocess.run(["git", "show", f"{ctx.base}:{rel}"], cwd=ROOT, capture_output=True, text=True)
+        if r.returncode == 0:
+            try:
+                for text, _ in load_yaml(r.stdout)[1]:
+                    allowance[text] = allowance.get(text, 0) + 1
+            except Exception:
+                pass  # the base didn't parse: every duplicate counts as introduced
+    introduced = []
+    for text, line in sorted(dups, key=lambda d: d[1]):
+        if allowance.get(text, 0) > 0:
+            allowance[text] -= 1
+        else:
+            introduced.append((text, line))
+    return introduced
+
+
+def clean_key(text: str) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]", "?", text)[:60]
 
 
 def check_yaml(ctx: Context):
@@ -504,6 +563,8 @@ def check_yaml(ctx: Context):
     if not ctx.in_ci:  # locally, new files are checked before they're committed
         paths += git("ls-files", "-z", "--others", "--exclude-standard", *spec).split("\0")
     problems, skipped, too_big, checked = [], 0, [], 0
+    added: list[str] = []
+    inherited: list[str] = []
     for rel in sorted(set(filter(None, paths))):
         path = ROOT / rel
         if path.is_symlink() or not path.is_file():
@@ -513,15 +574,23 @@ def check_yaml(ctx: Context):
             too_big.append(rel)
             continue
         checked += 1
-        problem = yaml_problem(path, rel)
+        problem, dups = yaml_problem(path, rel)
         if problem:
             problems.append((rel, problem))
+        if dups:  # only duplicates the change introduces fail; inherited ones warn (ADR 0017)
+            new = introduced_duplicates(ctx, rel, dups)
+            new_set = set(new)
+            added += [f"{rel}:{line}: duplicate key '{clean_key(t)}'" for t, line in new]
+            inherited += [f"{rel}:{line}: duplicate key '{clean_key(t)}'" for t, line in dups
+                          if (t, line) not in new_set]
     strict = ctx.stage not in ("commit", "hook")  # pr, CI and --only: any broken file fails
-    touched = [p for rel, p in problems if strict or rel in ctx.changed]
+    touched = [p for rel, p in problems if strict or rel in ctx.changed] + added
     untouched = [p for rel, p in problems if not (strict or rel in ctx.changed)]
     if touched:
         return "FAIL", "; ".join(touched[:5]) + (f" (+{len(touched) - 5} more)" if len(touched) > 5 else "")
     notes = []
+    if inherited:
+        notes.append("duplicate keys already on the base, fix in their own change: " + "; ".join(inherited[:5]))
     if untouched:
         notes.append("pre-existing broken YAML, fix in its own change: " + "; ".join(untouched[:5]))
     if too_big:
