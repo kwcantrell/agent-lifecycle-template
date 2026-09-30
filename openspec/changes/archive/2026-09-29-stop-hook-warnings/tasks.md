@@ -21,4 +21,5 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Delete the proposed `stop-check.sh` from the change folder, archive, and confirm `openspec validate --all --strict` passes
+- [x] 3.1 Delete the proposed `stop-check.sh` from the change folder, archive, and confirm `openspec validate --all --strict` passes
+  Evidence: proposed copy removed (`git rm`); `openspec validate --all --strict` -> `Totals: 3 passed, 0 failed`
