@@ -20,4 +20,5 @@
 
 ## 3. Archive
 
-- [ ] 3.1 After archive, confirm `openspec validate --all --strict` passes
+- [x] 3.1 After archive, confirm `openspec validate --all --strict` passes
+  Evidence: `openspec validate --all --strict` -> `Totals: 2 passed, 0 failed`
