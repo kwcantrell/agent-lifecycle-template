@@ -317,6 +317,69 @@ LEGACY = {"openspec/changes/legacy/proposal.md": "# Legacy\n\n## Why\n\nPredates
 GF_CHECKS = "change,risk-floor,approval,panel,tasks,evidence,artifacts-first,size"
 
 
+class UntrackedSizeTest(unittest.TestCase):
+    """Locally, size counts untracked files like git would; the hook stage only warns."""
+
+    def setUp(self) -> None:
+        self.repo = Repo()
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def size(self, stage: str | None = None, ci: bool = False) -> tuple[int, str]:
+        env = {"CI": "true" if ci else "", "LIFECYCLE_OVERRIDE": "", "GITHUB_EVENT_PATH": "", "GITHUB_BASE_REF": ""}
+        args = ["--stage", stage, "--quiet"] if stage else ["--only", "size"]
+        r = sh(self.repo.path, "scripts/check-change.sh", *args, env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    def lines(self, n: int) -> str:
+        return "".join(f"v{i} = {i}\n" for i in range(n))
+
+    def test_size_counts_untracked_files(self):
+        self.repo.write("src/new.py", self.lines(401))
+        rc, out = self.size()
+        self.assertIn("FAIL  size", out)
+        self.assertIn("401 changed lines", out)
+
+    def test_size_skips_excluded_ignored_binary_untracked(self):
+        self.repo.write("tests/test_big.py", self.lines(500))
+        self.repo.write(".gitignore", "scratch.log\n")
+        self.repo.commit("ignore")
+        self.repo.write("scratch.log", self.lines(500))
+        (self.repo.path / "blob.bin").write_bytes(b"\x00" * 10 + b"\n" * 500)
+        os.symlink("src/app.py", self.repo.path / "link.py")
+        rc, out = self.size()
+        self.assertIn("PASS  size", out)
+        self.assertIn("2/400", out)  # .gitignore (1 line) + the symlink (1 line)
+
+    def test_size_untracked_odd_names(self):
+        self.repo.write("src/é new.py", self.lines(401))
+        rc, out = self.size()
+        self.assertIn("FAIL  size", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_size_counts_last_line_without_newline(self):
+        self.repo.write("src/a.py", self.lines(400) + "tail")
+        rc, out = self.size()
+        self.assertIn("401 changed lines", out)
+        self.repo.write("src/a.py", "x\ry\r")  # CR-only: git counts 1
+        rc, out = self.size()
+        self.assertIn("1/400", out)
+
+    def test_size_ci_ignores_untracked(self):
+        self.repo.write("src/new.py", self.lines(500))
+        rc, out = self.size(ci=True)
+        self.assertIn("PASS  size", out)
+
+    def test_hook_stage_warns_on_size(self):
+        self.repo.write("src/new.py", self.lines(401))
+        rc, out = self.size(stage="hook")
+        self.assertIn("WARN  size", out)  # --quiet still shows the size warning
+        self.assertEqual(rc, 0, out)
+        rc, out = self.size(stage="pr")
+        self.assertIn("FAIL  size", out)
+
+
 class GrandfatherTest(unittest.TestCase):
     """In-flight changes that predate the lifecycle, bounded by what exists on the merge-base."""
 
