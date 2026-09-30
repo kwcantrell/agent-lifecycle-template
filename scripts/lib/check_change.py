@@ -32,10 +32,10 @@ CHANGES = "openspec/changes"
 ARCHIVE = "openspec/changes/archive"
 
 STAGES = {
-    "commit": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
-    "hook": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+    "commit": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
+    "hook": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
              "evidence", "size", "commands"],
-    "pr": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+    "pr": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
            "approval", "panel", "tasks", "evidence", "artifacts-first", "tests-with-code",
            "size", "commands", "audit"],
 }
@@ -435,6 +435,81 @@ def check_size(ctx: Context):
     return "PASS", f"{total}/{budget} changed lines"
 
 
+class TolerantLoader(yaml.SafeLoader):
+    """SafeLoader that reads unknown `!tags` (CloudFormation, Ansible) as plain values.
+
+    `!!python/...` tags resolve to tag:yaml.org,2002:python/*, not `!`, so they stay rejected.
+    """
+
+
+def _any_tag(loader: yaml.SafeLoader, suffix: str, node: yaml.Node):
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_scalar(node)
+
+
+TolerantLoader.add_multi_constructor("!", _any_tag)
+YAML_MAX_BYTES = 1 << 20
+
+
+def yaml_problem(path: Path, rel: str) -> str | None:
+    """None if the file parses (and, for the pre-commit config, has a loadable shape)."""
+    try:
+        docs = list(yaml.load_all(path.read_text(encoding="utf-8"), Loader=TolerantLoader))
+    except yaml.MarkedYAMLError as e:
+        mark = e.problem_mark or e.context_mark
+        line = f":{mark.line + 1}" if mark else ""
+        return f"{rel}{line}: {e.problem or e.context}"
+    except Exception as e:  # constructor errors, RecursionError, UnicodeDecodeError, ...
+        return f"{rel}: {type(e).__name__}: {str(e)[:120]}"
+    if rel == ".pre-commit-config.yaml":
+        cfg = docs[0] if docs else None
+        repos = cfg.get("repos") if isinstance(cfg, dict) else None
+        if not isinstance(repos, list):
+            return f"{rel}: pre-commit needs a top-level `repos` list"
+        for i, repo in enumerate(repos):
+            if not (isinstance(repo, dict) and "repo" in repo and isinstance(repo.get("hooks"), list)):
+                return f"{rel}: repos[{i}] needs `repo` and a `hooks` list"
+            if not all(isinstance(h, dict) and "id" in h for h in repo["hooks"]):
+                return f"{rel}: every hook in repos[{i}] needs an `id`"
+    return None
+
+
+def check_yaml(ctx: Context):
+    spec = ["--", "*.yml", "*.yaml"]
+    paths = git("ls-files", "-z", *spec).split("\0")
+    if not ctx.in_ci:  # locally, new files are checked before they're committed
+        paths += git("ls-files", "-z", "--others", "--exclude-standard", *spec).split("\0")
+    problems, skipped, too_big, checked = [], 0, [], 0
+    for rel in sorted(set(filter(None, paths))):
+        path = ROOT / rel
+        if path.is_symlink() or not path.is_file():
+            skipped += 1
+            continue
+        if path.stat().st_size > YAML_MAX_BYTES:
+            too_big.append(rel)
+            continue
+        checked += 1
+        problem = yaml_problem(path, rel)
+        if problem:
+            problems.append((rel, problem))
+    strict = ctx.stage not in ("commit", "hook")  # pr, CI and --only: any broken file fails
+    touched = [p for rel, p in problems if strict or rel in ctx.changed]
+    untouched = [p for rel, p in problems if not (strict or rel in ctx.changed)]
+    if touched:
+        return "FAIL", "; ".join(touched[:5]) + (f" (+{len(touched) - 5} more)" if len(touched) > 5 else "")
+    notes = []
+    if untouched:
+        notes.append("pre-existing broken YAML, fix in its own change: " + "; ".join(untouched[:5]))
+    if too_big:
+        notes.append(f"too large to check (> 1 MiB): {too_big[:5]}")
+    if notes:
+        return "WARN", " | ".join(notes)
+    return "PASS", f"{checked} YAML file(s) parse" + (f"; {skipped} symlink/non-file skipped" if skipped else "")
+
+
 def check_workflows(ctx: Context):
     wf_dir = ROOT / ".github/workflows"
     problems = []
@@ -517,6 +592,7 @@ CHECKS = {
     "tests-with-code": check_tests_with_code,
     "size": check_size,
     "workflows": check_workflows,
+    "yaml": check_yaml,
     "skills-sync": check_skills_sync,
     "guide-size": check_guide_size,
     "openspec": check_openspec,
@@ -576,7 +652,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL" or (status == "WARN" and name == "size"):
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml")):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 
