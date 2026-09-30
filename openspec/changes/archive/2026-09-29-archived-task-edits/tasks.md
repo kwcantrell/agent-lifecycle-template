@@ -42,5 +42,6 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Archive with the delta synced into `openspec/specs/gate-checker/spec.md`, and run
+- [x] 3.1 Archive with the delta synced into `openspec/specs/gate-checker/spec.md`, and run
   `openspec validate --all --strict`.
+  Evidence: `openspec archive archived-task-edits -y` -> `gate-checker: + 2 added ... archived as '2026-09-29-archived-task-edits'`; `openspec validate --all --strict` -> `Totals: 3 passed, 0 failed`
