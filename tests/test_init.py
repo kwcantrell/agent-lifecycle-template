@@ -131,6 +131,31 @@ class InitTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--owner needs a value", r.stderr)
 
+    # Exact files init.sh installs and must list in the target's lifecycle.managed_paths.
+    MANAGED = ["scripts/check-change.sh", "scripts/sync-skills.sh", "scripts/lib/check_change.py",
+               ".claude/hooks/guard-approval.sh", ".claude/hooks/stop-check.sh"]
+
+    def lifecycle(self, root: Path) -> dict:
+        import yaml
+        return yaml.safe_load((root / "openspec/config.yaml").read_text())["lifecycle"]
+
+    def test_init_sets_managed_paths(self):
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.lifecycle(self.target)["managed_paths"], self.MANAGED)
+        self.assertEqual(self.lifecycle(TEMPLATE)["managed_paths"], [])
+        for path in self.MANAGED:
+            self.assertTrue((self.target / path).is_file(), path)
+
+    def test_init_keeps_existing_managed_paths(self):
+        (self.target / "openspec").mkdir()
+        (self.target / "openspec/config.yaml").write_text(
+            "schema: spec-driven\nlifecycle:\n  managed_paths: [vendor/x.sh]\n")
+        self.commit()
+        r = self.init("--owner", "@acme/x", str(self.target))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.lifecycle(self.target)["managed_paths"], ["vendor/x.sh"])
+
 
 class RepoCodeownersTest(unittest.TestCase):
     def test_repo_codeowners_names_owner(self):

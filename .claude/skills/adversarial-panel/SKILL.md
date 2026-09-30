@@ -42,6 +42,14 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 Severities: `critical` (wrong or unsafe if shipped), `major` (should fix before approval),
 `minor` (optional).
 
+CI parses this file, so keep to the format:
+
+- Each finding is a top-level `- [ ]` or `- [x]` line, and its first word is the tag, in lowercase
+  and brackets. Put details on the same line; indented sub-bullets are not findings.
+- A ticked `[critical]` or `[major]` says `Resolved: ...` or `Declined by human: ...`.
+- If reviewers found nothing, write `No findings.` on its own line. Prose findings with no
+  checklist items fail CI.
+
 ## Rules
 
 - A critical finding is fixed, or the human explicitly declines it. The agent never ticks a

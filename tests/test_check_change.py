@@ -26,7 +26,7 @@ def sh(cwd: Path, *args: str, env: dict | None = None, stdin: str | None = None)
 
 
 class Repo:
-    def __init__(self) -> None:
+    def __init__(self, lifecycle: dict | None = None) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name)
         for rel in ("scripts", "openspec/config.yaml", "AGENTS.md", ".claude/hooks"):
@@ -37,6 +37,11 @@ class Repo:
         cfg = self.path / "openspec/config.yaml"
         text = re.sub(r'^(    (?:test|lint|typecheck|audit|build)): ".*?"', r'\1: ""', cfg.read_text(), flags=re.M)
         cfg.write_text(re.sub(r"^  source_globs: .*$", "  source_globs: []", text, flags=re.M))
+        if lifecycle:  # base-branch lifecycle settings for this test
+            import yaml
+            data = yaml.safe_load(cfg.read_text())
+            data["lifecycle"].update(lifecycle)
+            cfg.write_text(yaml.safe_dump(data, sort_keys=False))
         (self.path / "openspec/changes/archive").mkdir(parents=True)
         (self.path / "openspec/specs").mkdir(parents=True)
         (self.path / "src").mkdir()
@@ -221,6 +226,88 @@ class CheckerTest(unittest.TestCase):
         cfg.write_text(cfg.read_text().replace('test: ""', 'test: "exit 3"', 1))
         out = self.assertStatus("commands", "FAIL")
         self.assertIn("exited 3", out)
+
+
+class PanelFormatTest(unittest.TestCase):
+    """The panel gate enforces the checklist format instead of assuming it."""
+
+    def setUp(self) -> None:
+        self.repo = Repo()
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def panel(self, text: str) -> tuple[int, str]:
+        self.repo.change(2, panel=textwrap.dedent(text))
+        return self.repo.check("panel")
+
+    def assertPanel(self, text: str, status: str, needle: str = "") -> None:
+        rc, out = self.panel(text)
+        self.assertIn(f"{status:<4}  panel", out, out)
+        self.assertIn(needle, out)
+
+    def test_prose_panel_fails(self):
+        self.assertPanel("# Panel\n\nThree critical issues were found and fixed.\n",
+                         "FAIL", "no findings in checklist format")
+
+    def test_no_findings_panel_passes(self):
+        self.assertPanel("# Panel\n\nNo findings.  \n", "PASS")
+
+    def test_no_findings_in_code_block_fails(self):
+        self.assertPanel("# Panel\n\n```\nNo findings.\n```\n<!--\nNo findings.\n-->\n",
+                         "FAIL", "no findings in checklist format")
+
+    def test_untagged_panel_item_fails(self):
+        for item in ("- [ ] Drops rows", "- [ ] [Critical] Drops rows", "- [x] fixed [minor] thing"):
+            with self.subTest(item=item):
+                self.assertPanel(f"- [x] [minor] ok. Resolved: yes\n{item}\n", "FAIL", "untagged")
+
+    def test_nested_sub_bullet_not_a_finding(self):
+        self.assertPanel("- [x] [major] Retry unbounded. Resolved: capped at 3\n  - [ ] see above\n", "PASS")
+
+    def test_ticked_critical_needs_resolution(self):
+        self.assertPanel("- [x] [critical] Drops rows\n", "FAIL", "without Resolved:")
+        self.assertPanel("- [x] [critical] Drops rows. Declined by human: out of scope\n", "PASS")
+        self.assertPanel("- [x] [minor] Rename\n", "PASS")
+
+    def test_open_critical_still_fails(self):
+        self.assertPanel("- [ ] [critical] Drops rows\n", "FAIL", "open critical")
+
+
+class ExemptionTest(unittest.TestCase):
+    """Test-folder globs, managed paths, and exemptions read from the base branch."""
+
+    def tearDown(self) -> None:
+        self.repo.close()
+
+    def test_nested_tests_dir_counts_as_tests(self):
+        self.repo = Repo(lifecycle={"source_globs": ["src/**"]})
+        self.repo.write("src/app.sh", "echo 2\n")
+        self.repo.write("scripts/tests/test-app.sh", "echo ok\n")
+        rc, out = self.repo.check("tests-with-code")
+        self.assertIn("PASS  tests-with-code", out, out)
+
+    def test_managed_paths_ignored_by_tests_with_code(self):
+        self.repo = Repo(lifecycle={"source_globs": ["vendor/**"], "managed_paths": ["vendor/tool.sh"]})
+        self.repo.write("vendor/tool.sh", "#!/bin/sh\necho updated\n")
+        rc, out = self.repo.check("tests-with-code")
+        self.assertIn("PASS  tests-with-code", out, out)
+
+    def test_managed_paths_ignored_by_size(self):
+        self.repo = Repo(lifecycle={"managed_paths": ["vendor/tool.py"]})
+        self.repo.write("vendor/tool.py", "".join(f"v{i} = {i}\n" for i in range(600)))
+        self.repo.commit("vendored update")
+        rc, out = self.repo.check("size")
+        self.assertIn("PASS  size", out, out)
+
+    def test_pr_cannot_grant_own_exemption(self):
+        self.repo = Repo(lifecycle={"source_globs": ["src/**"]})
+        cfg = self.repo.path / "openspec/config.yaml"
+        cfg.write_text(cfg.read_text().replace("lifecycle:\n", "lifecycle:\n  managed_paths: ['src/**']\n", 1))
+        self.repo.write("src/app.py", "x = 9\n")
+        self.repo.commit("exempt my own source")
+        rc, out = self.repo.check("tests-with-code")
+        self.assertIn("FAIL  tests-with-code", out, out)
 
 
 class OnlyTest(unittest.TestCase):
